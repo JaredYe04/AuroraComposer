@@ -102,6 +102,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+ "tauri-plugin-fs",
  "thiserror 2.0.18",
  "tokio",
  "uuid",
@@ -140,6 +141,7 @@ version = "0.1.0"
 dependencies = [
  "aurora-ast",
  "aurora-core",
+ "aurora-engine",
  "chrono",
  "midly",
  "quick-xml 0.37.5",

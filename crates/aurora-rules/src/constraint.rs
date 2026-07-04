@@ -152,6 +152,14 @@ fn rule_active(rule: &HardRule, params: &ParameterBundle) -> bool {
     if id == "HARM-050" {
         return params.harmony_complexity() <= 0.2;
     }
+    // Chromatic progressions (V7/x, bVII, iv) are valid above moderate complexity;
+    // the legacy check rejects every melody candidate on those chords.
+    if id == "HARM-041" {
+        return params.harmony_complexity() < 0.35;
+    }
+    if id == "HARM-MEL-002" || id == "HARM-MEL-003" {
+        return params.tonal_conservatism() >= 0.55;
+    }
     true
 }
 
@@ -201,6 +209,36 @@ mod tests {
             ),
             "expected register rule, got {}",
             err.rule_id
+        );
+    }
+
+    #[test]
+    fn harm_041_inactive_when_complexity_moderate() {
+        use crate::{ChordQuality, ChordSymbol, KeySignature, Mode, PitchClass};
+
+        let ruleset = prototype_rule_set();
+        let mut params = ParameterBundle::default();
+        params.harmony.complexity = 0.5;
+        let evaluator = ConstraintEvaluator::new(ruleset, params);
+
+        let mut snapshot = AstSnapshot::default();
+        snapshot.current_chord = Some(ChordSymbol {
+            root: PitchClass { pc: 4 },
+            quality: ChordQuality::Dominant7,
+            extensions: vec![],
+            bass: None,
+            raw: "E7".into(),
+        });
+        snapshot.key = KeySignature {
+            tonic: PitchClass { pc: 0 },
+            mode: Mode::Major,
+        };
+
+        let patch = note_patch(64);
+        let bundle = evaluator.make_context(&snapshot, &patch, VoiceRole::Melody, 0);
+        assert!(
+            evaluator.check(&bundle.context()).is_ok(),
+            "HARM-041 must not block melody on secondary dominants at complexity 0.5"
         );
     }
 

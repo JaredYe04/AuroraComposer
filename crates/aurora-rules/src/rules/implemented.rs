@@ -3,8 +3,9 @@
 use aurora_ast::{CadenceType, ChordQuality, Mode, VoiceRole};
 
 use super::helpers::{
-    chord_pitch_classes, is_diatonic_in_key, is_minor_key, leading_tone_pc, motif_similarity,
-    on_grid, parallel_perfect, register_check,
+    chord_pitch_classes, contour_balance_eval, is_diatonic_in_key, is_minor_key,
+    is_primary_dominant_chord, leading_tone_pc, melody_closure_eval, motif_similarity, on_grid,
+    parallel_perfect, register_check,
 };
 use crate::eval_context::{BeatStrengthKind, EvaluationContext};
 use crate::rule::{
@@ -225,14 +226,18 @@ pub fn harm_008_hard() -> HardRule {
             citation: None,
             cost: EvalCost::Low,
         },
-        when: Some(|ctx| is_minor_key(&ctx.snapshot.key)),
+        when: Some(|ctx| {
+            is_minor_key(&ctx.snapshot.key)
+                && ctx
+                    .snapshot
+                    .current_chord
+                    .as_ref()
+                    .is_some_and(|c| is_primary_dominant_chord(c, &ctx.snapshot.key))
+        }),
         check: |ctx| {
             let Some(chord) = &ctx.snapshot.current_chord else {
                 return true;
             };
-            if !matches!(chord.quality, ChordQuality::Major | ChordQuality::Dominant7) {
-                return true;
-            }
             let leading = (ctx.snapshot.key.tonic.pc + 11) % 12;
             chord_pitch_classes(chord).contains(&leading)
         },
@@ -310,7 +315,7 @@ pub fn harm_001_soft() -> SoftRule {
                 }
             } else {
                 SoftEvalOutcome {
-                    indicator: 0.5,
+                    indicator: 1.0,
                     is_penalty: true,
                     reason: "Non-chord tone on strong beat".into(),
                 }
@@ -537,7 +542,11 @@ fn alias_common_tone(id: &str, name: &str) -> SoftRule {
             cost: EvalCost::Low,
         },
         weight_key: Some("voice.stepwise_preference"),
-        when: Some(|ctx| ctx.prev_pitch().is_some() && ctx.candidate_pitch().is_some()),
+        when: Some(|ctx| {
+            !matches!(ctx.voice_role, VoiceRole::Melody)
+                && ctx.prev_pitch().is_some()
+                && ctx.candidate_pitch().is_some()
+        }),
         evaluate: |ctx, _| {
             let prev = ctx.prev_pitch().unwrap();
             let curr = ctx.candidate_pitch().unwrap();
@@ -578,12 +587,14 @@ fn alias_stepwise(id: &str, name: &str) -> SoftRule {
         when: Some(|ctx| ctx.interval_semitones().is_some()),
         evaluate: |ctx, _| {
             let interval = ctx.interval_semitones().unwrap().unsigned_abs();
-            let stepwise = interval <= 2;
+            let stepwise = interval >= 1 && interval <= 2;
             SoftEvalOutcome {
                 indicator: if stepwise { 1.0 } else { 0.0 },
                 is_penalty: false,
                 reason: if stepwise {
-                    "Stepwise motion in melody".into()
+                    "Stepwise motion".into()
+                } else if interval == 0 {
+                    "Unison (not stepwise)".into()
                 } else {
                     "Non-stepwise motion".into()
                 },
@@ -1143,4 +1154,200 @@ pub fn cont_002_hard() -> HardRule {
     let mut r = cp_par_002_hard();
     r.meta.id = RuleId::new("CONT-002");
     r
+}
+
+// --- Melodic consonance (tonal conservatism) ---
+
+pub fn harm_mel_001_soft() -> SoftRule {
+    SoftRule {
+        meta: Rule {
+            id: RuleId::new("HARM-MEL-001"),
+            name: "Melodic NCT penalty on strong beat".into(),
+            category: RuleCategory::Harmony,
+            mode: RuleMode::Soft,
+            scope: RuleScope::Event,
+            citation: Some("Kostka & Payne, Ch. 4".into()),
+            cost: EvalCost::Low,
+        },
+        weight_key: Some("melody.nct_penalty"),
+        when: Some(|ctx| {
+            matches!(ctx.voice_role, VoiceRole::Melody)
+                && ctx.candidate_pitch().is_some()
+                && ctx.snapshot.current_chord.is_some()
+        }),
+        evaluate: |ctx, _| {
+            use crate::eval_context::PitchExt;
+            use crate::melody_nct::{classify_melodic_nct, MelodicNctKind};
+            let pitch = ctx.candidate_pitch().unwrap();
+            let chord = ctx.snapshot.current_chord.as_ref().unwrap();
+            let prev = ctx.prev_pitch();
+            let nct = classify_melodic_nct(pitch, prev, chord, &ctx.snapshot.key);
+            let is_strong = ctx.is_strong_beat();
+            let penalty = match nct {
+                MelodicNctKind::ChordTone => 0.0,
+                MelodicNctKind::DiatonicNeighbor if !is_strong => 0.12,
+                MelodicNctKind::DiatonicPassing if !is_strong => 0.20,
+                MelodicNctKind::ApproachTone if !is_strong => 0.28,
+                MelodicNctKind::ChromaticNeighbor => 0.70,
+                MelodicNctKind::ChromaticPassing => 0.80,
+                MelodicNctKind::Other if is_strong => 0.95,
+                MelodicNctKind::Other => 0.55,
+                _ if is_strong => 0.90,
+                _ => 0.45,
+            };
+            if penalty < 0.2 {
+                SoftEvalOutcome {
+                    indicator: 1.0,
+                    is_penalty: false,
+                    reason: "Consonant melodic choice".into(),
+                }
+            } else {
+                SoftEvalOutcome {
+                    indicator: penalty,
+                    is_penalty: true,
+                    reason: format!("Melodic dissonance ({nct:?})"),
+                }
+            }
+        },
+    }
+}
+
+pub fn mel_contour_001_soft() -> SoftRule {
+    SoftRule {
+        meta: Rule {
+            id: RuleId::new("MEL-CONT-001"),
+            name: "Balanced contour / return home".into(),
+            category: RuleCategory::Motif,
+            mode: RuleMode::Soft,
+            scope: RuleScope::EventPair,
+            citation: Some("Koch, Introducing Melodic Contour".into()),
+            cost: EvalCost::Low,
+        },
+        weight_key: Some("melody.contour_balance"),
+        when: Some(|ctx| {
+            matches!(ctx.voice_role, VoiceRole::Melody) && ctx.candidate_pitch().is_some()
+        }),
+        evaluate: |ctx, _| contour_balance_eval(ctx),
+    }
+}
+
+pub fn mel_close_001_soft() -> SoftRule {
+    SoftRule {
+        meta: Rule {
+            id: RuleId::new("MEL-CLOSE-001"),
+            name: "Melodic closure at phrase and piece end".into(),
+            category: RuleCategory::Form,
+            mode: RuleMode::Soft,
+            scope: RuleScope::Event,
+            citation: Some("Kostka & Payne, Tonal Harmony — cadential melody".into()),
+            cost: EvalCost::Low,
+        },
+        weight_key: Some("harmony.cadence_strength"),
+        when: Some(|ctx| {
+            matches!(ctx.voice_role, VoiceRole::Melody)
+                && ctx.candidate_pitch().is_some()
+                && (ctx.snapshot.phrase_end
+                    || ctx.snapshot.is_piece_end_step
+                    || ctx.snapshot.in_closure_zone)
+        }),
+        evaluate: |ctx, _| melody_closure_eval(ctx),
+    }
+}
+
+/// Penalize immediate pitch repetition in melody (motivic variation over static repeat).
+pub fn mel_rep_001_soft() -> SoftRule {
+    SoftRule {
+        meta: Rule {
+            id: RuleId::new("MEL-REP-001"),
+            name: "Avoid consecutive same pitch in melody".into(),
+            category: RuleCategory::Motif,
+            mode: RuleMode::Soft,
+            scope: RuleScope::EventPair,
+            citation: Some("Compose/Vary/Repeat — vary before repeat".into()),
+            cost: EvalCost::Low,
+        },
+        weight_key: Some("melody.contour_balance"),
+        when: Some(|ctx| {
+            matches!(ctx.voice_role, VoiceRole::Melody)
+                && ctx.prev_pitch().is_some()
+                && ctx.candidate_pitch().is_some()
+        }),
+        evaluate: |ctx, _| {
+            let prev = ctx.prev_pitch().unwrap();
+            let curr = ctx.candidate_pitch().unwrap();
+            let same = prev.midi == curr.midi;
+            let motif_ok = ctx.snapshot.motif_expected_pitch.is_some_and(|e| {
+                (curr.midi as i16 - e as i16).unsigned_abs() <= 1
+            });
+            SoftEvalOutcome {
+                indicator: if same && !motif_ok { 0.9 } else { 0.0 },
+                is_penalty: same && !motif_ok,
+                reason: if same && !motif_ok {
+                    "Consecutive same pitch — prefer variation".into()
+                } else {
+                    "Melodic motion".into()
+                },
+            }
+        },
+    }
+}
+
+pub fn harm_mel_002_hard() -> HardRule {
+    HardRule {
+        meta: Rule {
+            id: RuleId::new("HARM-MEL-002"),
+            name: "Strong beat chord tone when conservative".into(),
+            category: RuleCategory::Harmony,
+            mode: RuleMode::Hard,
+            scope: RuleScope::Event,
+            citation: Some("Aldwell & Schachter, Ch. 4".into()),
+            cost: EvalCost::Low,
+        },
+        when: Some(|ctx| {
+            matches!(ctx.voice_role, VoiceRole::Melody)
+                && ctx.is_strong_beat()
+                && ctx.candidate_pitch().is_some()
+                && ctx.snapshot.current_chord.is_some()
+        }),
+        check: |ctx| {
+            use crate::eval_context::PitchExt;
+            let pitch = ctx.candidate_pitch().unwrap();
+            ctx.snapshot
+                .current_chord
+                .as_ref()
+                .map(|c| chord_pitch_classes(c).contains(&pitch.pitch_class().pc))
+                .unwrap_or(true)
+        },
+        fail_reason: |_| "Strong beat must be a chord tone".into(),
+    }
+}
+
+pub fn harm_mel_003_hard() -> HardRule {
+    HardRule {
+        meta: Rule {
+            id: RuleId::new("HARM-MEL-003"),
+            name: "Phrase start on chord tone when conservative".into(),
+            category: RuleCategory::Harmony,
+            mode: RuleMode::Hard,
+            scope: RuleScope::Event,
+            citation: Some("Aldwell & Schachter, Ch. 4".into()),
+            cost: EvalCost::Low,
+        },
+        when: Some(|ctx| {
+            matches!(ctx.voice_role, VoiceRole::Melody)
+                && ctx.candidate_pitch().is_some()
+                && (ctx.snapshot.melody_pitches.is_empty()
+                    || ctx.step_index as usize % ctx.snapshot.phrase_length_beats.max(1) == 0)
+        }),
+        check: |ctx| {
+            use crate::eval_context::PitchExt;
+            let pitch = ctx.candidate_pitch().unwrap();
+            ctx.snapshot
+                .current_chord
+                .as_ref()
+                .map(|c| chord_pitch_classes(c).contains(&pitch.pitch_class().pc))
+                .unwrap_or(true)
+        },
+        fail_reason: |_| "Phrase must begin on a chord tone".into(),
+    }
 }

@@ -93,13 +93,21 @@ impl ScoringFunction {
             "VLED-003" | "VLED-001" => self.params.stepwise_preference(),
             "VLED-010" => self.params.leap_penalty(),
             "CONT-001-soft" => self.params.parallel_penalty(),
-            "MOTI-001" => self.params.repetition_ratio() * 20.0,
+            "MOTI-001" => {
+                self.params.repetition_ratio() * 20.0
+                    * (0.5 + f64::from(self.params.melody.motif_weight) * 0.75)
+            }
             "RHYT-005" => self.params.syncopation() * 10.0,
             "HARM-003" => self.params.harmony_complexity() * 10.0,
             "HARM-021" => self.params.harmony_complexity() * 8.5,
             "RHYT-001" => self.params.dynamics.accent_strength as f64 * 10.0,
             "DRUM-003" => self.params.drums.pattern_complexity as f64 * 5.0,
             "HARM-010" => self.params.dissonance_tolerance() * 15.0,
+            "HARM-MEL-001" => self.params.nct_penalty_weight(),
+            "MEL-CONT-001" => self.params.contour_balance_weight(),
+            "MEL-CLOSE-001" => self.params.cadence_strength_weight() * 1.8,
+            "MEL-REP-001" => self.params.contour_balance_weight() * 2.5,
+            "ORCH-010" => self.params.contour_balance_weight() * 2.0,
             _ => 1.0,
         }
     }

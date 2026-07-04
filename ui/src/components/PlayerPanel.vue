@@ -1,38 +1,51 @@
 <script setup lang="ts">
-import { onUnmounted, ref, watch } from 'vue';
-import * as Tone from 'tone';
+import { onMounted, onUnmounted, ref, watch } from 'vue';
+import IconButton from '@/components/IconButton.vue';
 import { useI18n } from '@/composables/useI18n';
 import { useCompositionStore } from '@/stores/composition';
 import { usePlaybackStore } from '@/stores/playback';
+import { useSettingsStore, type MelodyEngine } from '@/stores/settings';
+import { setMelodyEngine, setMasterVolume } from '@/services/player';
 
 const { t } = useI18n();
 const compStore = useCompositionStore();
 const playback = usePlaybackStore();
+const settings = useSettingsStore();
 const volume = ref(0.7);
 const error = ref<string | null>(null);
 
-async function play() {
+const melodyOptions: { value: MelodyEngine; labelKey: string }[] = [
+  { value: 'gm', labelKey: 'playback.melodyGm' },
+  { value: 'sine', labelKey: 'playback.melodySine' },
+  { value: 'square', labelKey: 'playback.melodySquare' },
+  { value: 'triangle', labelKey: 'playback.melodyTriangle' },
+  { value: 'sawtooth', labelKey: 'playback.melodySawtooth' },
+];
+
+async function togglePlay() {
   error.value = null;
   if (playback.isPlaying) {
-    await stop();
+    await compStore.stop();
     return;
   }
   try {
-    Tone.getDestination().volume.value = Tone.gainToDb(volume.value);
+    setMasterVolume(volume.value);
     await compStore.play();
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
   }
 }
 
-async function stop() {
-  await compStore.stop();
-}
-
 function onVolumeInput(e: Event) {
   const val = Number((e.target as HTMLInputElement).value);
   volume.value = val;
-  Tone.getDestination().volume.value = Tone.gainToDb(val);
+  setMasterVolume(val);
+}
+
+function onMelodyEngineChange(e: Event) {
+  const next = (e.target as HTMLSelectElement).value as MelodyEngine;
+  settings.setMelodyEngine(next);
+  setMelodyEngine(next);
 }
 
 watch(
@@ -42,20 +55,38 @@ watch(
   },
 );
 
+onMounted(() => {
+  setMelodyEngine(settings.melodyEngine);
+  setMasterVolume(volume.value);
+});
+
 onUnmounted(() => {
-  void stop();
+  void compStore.stop();
 });
 </script>
 
 <template>
   <div class="player-panel">
-    <h3>{{ t('playback.title') }}</h3>
     <div class="controls">
-      <button class="transport" :disabled="!compStore.summary" @click="play">
-        {{ playback.isPlaying ? t('playback.stop') : t('playback.play') }}
-      </button>
+      <div class="transport-wrap">
+        <IconButton
+          variant="transport"
+          :icon="playback.isPlaying ? 'stop' : 'play'"
+          :title="playback.isPlaying ? t('playback.stop') : t('playback.play')"
+          :disabled="!compStore.summary"
+          @click="togglePlay"
+        />
+      </div>
+      <label class="melody-engine">
+        <span>{{ t('playback.melodyEngine') }}</span>
+        <select :value="settings.melodyEngine" @change="onMelodyEngineChange">
+          <option v-for="opt in melodyOptions" :key="opt.value" :value="opt.value">
+            {{ t(opt.labelKey as 'playback.melodyGm') }}
+          </option>
+        </select>
+      </label>
       <label class="volume">
-        {{ t('playback.volume') }}
+        <span>{{ t('playback.volume') }}</span>
         <input
           type="range"
           min="0"
@@ -64,74 +95,65 @@ onUnmounted(() => {
           :value="volume"
           @input="onVolumeInput"
         />
-        {{ Math.round(volume * 100) }}%
+        <span>{{ Math.round(volume * 100) }}%</span>
       </label>
     </div>
-    <p v-if="!compStore.summary" class="hint">{{ t('playback.hint') }}</p>
     <p v-if="error" class="error">{{ error }}</p>
   </div>
 </template>
 
 <style scoped>
 .player-panel {
-  padding: 0.5rem 0.75rem;
-  background: var(--bg-panel);
-  border: 1px solid var(--border-muted);
-  border-radius: 6px;
-}
-
-.player-panel h3 {
-  margin: 0 0 0.5rem;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
 }
 
 .controls {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.5rem;
   flex-wrap: wrap;
 }
 
-.transport {
-  padding: 0.35rem 1rem;
-  background: var(--success);
-  border: 1px solid var(--success);
-  border-radius: 6px;
-  color: #fff;
-  font-weight: 600;
-  cursor: pointer;
+.transport-wrap {
+  display: flex;
+  justify-content: center;
+  min-width: 2.25rem;
 }
 
-.transport:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.melody-engine {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.melody-engine select {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.3rem;
+  border-radius: 4px;
+  border: 1px solid var(--border-muted);
+  background: var(--bg-panel-elevated);
+  color: var(--text-primary);
 }
 
 .volume {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  font-size: 0.8125rem;
+  gap: 0.35rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
-  flex: 1;
-  min-width: 120px;
+  min-width: 100px;
 }
 
 .volume input {
-  flex: 1;
-}
-
-.hint {
-  margin: 0.35rem 0 0;
-  font-size: 0.75rem;
-  color: var(--text-faint);
+  width: 72px;
 }
 
 .error {
-  margin: 0.35rem 0 0;
+  margin: 0;
   font-size: 0.75rem;
   color: var(--error);
 }

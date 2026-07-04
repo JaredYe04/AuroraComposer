@@ -8,7 +8,10 @@ use aurora_ast::{
 };
 use aurora_ast::nodes::{VoiceGroup, VoiceGroupId, VoiceGroupKind};
 
-use super::common::{bass_voice_id, counterpoint_enabled, drums_voice_id};
+use crate::progression::plan_key_changes;
+
+use super::common::{bass_voice_id, counterpoint_enabled, drums_voice_id, harmony_pad_enabled, harmony_pad_voice_id, accompaniment_enabled, accompaniment_voice_id, resolve_accompaniment_instrument};
+use crate::progression::parse_mode;
 use aurora_core::NodeId;
 use aurora_ast::provenance::ProvenanceRoot;
 
@@ -22,27 +25,28 @@ pub fn plan_structure(state: &mut PipelineState, created_at: &str) -> Result<(),
     let tempo = 120.0 + f64::from(state.emotion.tempo_delta_bpm);
 
     let tonic_pc = state.params.mode.key % 12;
-    let mode = if state.params.mode.mode.to_lowercase().contains("minor") {
-        Mode::NaturalMinor
-    } else {
-        Mode::Major
-    };
+    let mode = parse_mode(&state.params.mode.mode);
     let key = KeySignature {
         tonic: PitchClass { pc: tonic_pc },
         mode,
     };
 
-    let phrase_len = 4u16;
+    let phrase_len = u16::from(state.params.form.phrase_length.max(1));
     let phrase_count = (bars / phrase_len).max(1);
     let mut measures: Vec<Measure> = Vec::new();
     let mut next_id = 1u64;
 
     let cp_enabled = counterpoint_enabled(state);
+    let pad_enabled = harmony_pad_enabled(state);
     let bass_id = bass_voice_id(state);
     let drums_id = drums_voice_id(state);
     let mut voice_slots = vec![VoiceId(0), bass_id, drums_id];
     if cp_enabled {
         voice_slots.insert(1, VoiceId(1));
+    } else if pad_enabled {
+        voice_slots.insert(1, harmony_pad_voice_id());
+    } else if accompaniment_enabled(state) {
+        voice_slots.insert(1, accompaniment_voice_id());
     }
 
     for global in 1..=bars {
@@ -149,6 +153,68 @@ pub fn plan_structure(state: &mut PipelineState, created_at: &str) -> Result<(),
             priority: 1,
             mutable: true,
         });
+    } else if pad_enabled {
+        registry_voices.push(VoiceDef {
+            id: harmony_pad_voice_id(),
+            name: "Harmony".into(),
+            role: VoiceRole::HarmonyPad,
+            register: PitchRange {
+                min_midi: 48,
+                max_midi: 72,
+                preferred_min: 52,
+                preferred_max: 67,
+            },
+            midi_channel: 2,
+            group: Some(VoiceGroupId(0)),
+            instrument: InstrumentSpec {
+                gm_program: 0,
+                name: "Piano".into(),
+                transposition: 0,
+                clef: Clef::Treble,
+                staff_lines: 5,
+            },
+            export: VoiceExportSpec {
+                musicxml_part_id: "P2".into(),
+                staff_index: 1,
+                abbrev: Some("H".into()),
+                hide_if_empty: false,
+            },
+            priority: 1,
+            mutable: true,
+        });
+    } else if accompaniment_enabled(state) {
+        let (gm, name) = resolve_accompaniment_instrument(
+            &state.style.genre,
+            &state.params.accompaniment.instrument,
+        );
+        registry_voices.push(VoiceDef {
+            id: accompaniment_voice_id(),
+            name: "Chords".into(),
+            role: VoiceRole::HarmonyPad,
+            register: PitchRange {
+                min_midi: state.params.accompaniment.register_min,
+                max_midi: state.params.accompaniment.register_max,
+                preferred_min: state.params.accompaniment.register_min + 2,
+                preferred_max: state.params.accompaniment.register_max - 2,
+            },
+            midi_channel: 2,
+            group: Some(VoiceGroupId(0)),
+            instrument: InstrumentSpec {
+                gm_program: gm,
+                name: name.into(),
+                transposition: 0,
+                clef: Clef::Treble,
+                staff_lines: 5,
+            },
+            export: VoiceExportSpec {
+                musicxml_part_id: "P2".into(),
+                staff_index: 1,
+                abbrev: Some("Ch".into()),
+                hide_if_empty: false,
+            },
+            priority: 1,
+            mutable: true,
+        });
     }
 
     registry_voices.push(VoiceDef {
@@ -161,7 +227,7 @@ pub fn plan_structure(state: &mut PipelineState, created_at: &str) -> Result<(),
             preferred_min: state.params.register.bass_register_min + 2,
             preferred_max: state.params.register.bass_register_max - 2,
         },
-        midi_channel: if cp_enabled { 3 } else { 2 },
+        midi_channel: if cp_enabled || accompaniment_enabled(state) { 3 } else { 2 },
         group: Some(VoiceGroupId(0)),
         instrument: InstrumentSpec {
             gm_program: 32,
@@ -171,8 +237,17 @@ pub fn plan_structure(state: &mut PipelineState, created_at: &str) -> Result<(),
             staff_lines: 5,
         },
         export: VoiceExportSpec {
-            musicxml_part_id: if cp_enabled { "P3" } else { "P2" }.into(),
-            staff_index: if cp_enabled { 2 } else { 1 },
+            musicxml_part_id: if cp_enabled || accompaniment_enabled(state) {
+                "P3"
+            } else {
+                "P2"
+            }
+            .into(),
+            staff_index: if cp_enabled || accompaniment_enabled(state) {
+                2
+            } else {
+                1
+            },
             abbrev: Some("B".into()),
             hide_if_empty: false,
         },
@@ -200,8 +275,17 @@ pub fn plan_structure(state: &mut PipelineState, created_at: &str) -> Result<(),
             staff_lines: 5,
         },
         export: VoiceExportSpec {
-            musicxml_part_id: if cp_enabled { "P4" } else { "P3" }.into(),
-            staff_index: if cp_enabled { 3 } else { 2 },
+            musicxml_part_id: if cp_enabled || accompaniment_enabled(state) {
+                "P4"
+            } else {
+                "P3"
+            }
+            .into(),
+            staff_index: if cp_enabled || accompaniment_enabled(state) {
+                3
+            } else {
+                2
+            },
             abbrev: Some("Dr".into()),
             hide_if_empty: false,
         },
@@ -260,9 +344,21 @@ pub fn plan_structure(state: &mut PipelineState, created_at: &str) -> Result<(),
                     ramp: None,
                 }],
             },
-            key_map: KeyMap {
-                default: key,
-                changes: vec![],
+            key_map: {
+                let mut km = KeyMap {
+                    default: key,
+                    changes: vec![],
+                };
+                plan_key_changes(
+                    &mut km,
+                    bars as usize,
+                    &state.params.form.section_lengths,
+                    state.params.form.section_count,
+                    tonic_pc,
+                    mode,
+                    &state.params.mode.modulation_policy,
+                );
+                km
             },
             meter_map: MeterMap {
                 default: TimeSignature { beats, beat_type },

@@ -11,7 +11,7 @@ pub mod provenance;
 pub mod snapshot;
 pub mod types;
 
-pub use builder::CompositionBuilder;
+pub use builder::{blank_workbench, CompositionBuilder};
 pub use events::{
     Articulation, AutomationEvent, ChordEvent, Event, MarkerEvent, NoteEvent, Ornament, PitchRole,
     RestEvent, TimedEventBase, TieSpec,
@@ -31,5 +31,8 @@ pub use provenance::{
     SearchContext, StateRef,
 };
 pub use project::{ParameterSnapshot, Project};
-pub use patch::{apply_patch, patch_insert_event, patch_update_note_pitch, Patch, PatchOp, PatchRecord};
+pub use patch::{
+    apply_patch, patch_delete_event, patch_insert_event, patch_insert_note,
+    patch_update_note_pitch, Patch, PatchOp, PatchRecord,
+};
 pub use types::{BeatOffset, NoteType, Pitch, PitchRange, Step, WrittenDuration};

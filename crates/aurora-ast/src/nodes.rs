@@ -246,6 +246,8 @@ impl ChordSymbol {
     pub fn pitch_classes(&self) -> [u8; 3] {
         let root = self.root.pc;
         let (third, fifth) = match self.quality {
+            ChordQuality::Sus2 => (2, 7),
+            ChordQuality::Sus4 => (5, 7),
             ChordQuality::Minor | ChordQuality::Minor7 | ChordQuality::HalfDiminished7 => (3, 7),
             ChordQuality::Diminished | ChordQuality::Diminished7 => (3, 6),
             ChordQuality::Augmented => (4, 8),
@@ -256,6 +258,37 @@ impl ChordSymbol {
             (root + third) % 12,
             (root + fifth) % 12,
         ]
+    }
+
+    /// All pitch classes for voicing (triad + 7th when quality implies it).
+    #[must_use]
+    pub fn voicing_pcs(&self) -> Vec<u8> {
+        let mut pcs: Vec<u8> = self.pitch_classes().into_iter().collect();
+        if let Some(seventh) = self.seventh_pc() {
+            if !pcs.contains(&seventh) {
+                pcs.push(seventh);
+            }
+        }
+        if let Some(bass) = self.bass {
+            if !pcs.contains(&bass.pc) {
+                pcs.insert(0, bass.pc);
+            }
+        }
+        pcs.sort_unstable();
+        pcs.dedup();
+        pcs
+    }
+
+    fn seventh_pc(&self) -> Option<u8> {
+        let root = self.root.pc;
+        Some(match self.quality {
+            ChordQuality::Dominant7 | ChordQuality::Minor7 | ChordQuality::HalfDiminished7 => {
+                (root + 10) % 12
+            }
+            ChordQuality::Major7 => (root + 11) % 12,
+            ChordQuality::Diminished7 => (root + 9) % 12,
+            _ => return None,
+        })
     }
 
     #[must_use]

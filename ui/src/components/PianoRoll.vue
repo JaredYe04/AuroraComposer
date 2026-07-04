@@ -3,42 +3,57 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { PianoRollNote } from '@/types/aurora';
 import { PROVENANCE_COLORS, nodeIdKey } from '@/types/aurora';
 import {
+  DRUM_MAP,
+  drumMidiToRowIndex,
+  drumRowCountForNotes,
+  drumRowLabel,
+  drumRowToY,
   globalBeatToX,
+  isBlackKey,
   noteWidth,
   noteX,
   pitchLabel,
   pitchToY,
+  rowIndexToDrumMidi,
   totalMeasuresFromNotes,
   visiblePitchRange,
   xToGlobalBeat,
   xToMeasure,
+  yToDrumRowIndex,
 } from '@/utils/pianoRoll';
 import HorizontalScrollBar from '@/components/HorizontalScrollBar.vue';
 import { useCompositionStore } from '@/stores/composition';
+import { usePianoToolStore } from '@/stores/pianoTool';
 import { usePlaybackStore } from '@/stores/playback';
 import { useSelectionStore } from '@/stores/selection';
 import { useSettingsStore } from '@/stores/settings';
+import { useSnapGridStore } from '@/stores/snapGrid';
 
 const props = defineProps<{
   notes: PianoRollNote[];
   beatsPerMeasure?: number;
+  isDrum?: boolean;
 }>();
 
 const selection = useSelectionStore();
 const compStore = useCompositionStore();
 const playback = usePlaybackStore();
+const pianoTool = usePianoToolStore();
 const settings = useSettingsStore();
+const snapGrid = useSnapGridStore();
 
 const rootRef = ref<HTMLDivElement | null>(null);
 const viewportRef = ref<HTMLDivElement | null>(null);
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 const rulerRef = ref<HTMLCanvasElement | null>(null);
 
-const KEY_WIDTH = 48;
+const KEY_WIDTH = 56;
 const RULER_HEIGHT = 28;
+const ROW_HEIGHT = 14;
 const viewportSize = ref({ width: 400, height: 200 });
+const scrollY = ref(0);
 
-const beatsPerMeasure = computed(() => props.beatsPerMeasure ?? 4);
+const beatsPerMeasure = computed(() => props.beatsPerMeasure ?? playback.beatsPerMeasure ?? 4);
 const totalMeasures = computed(() =>
   totalMeasuresFromNotes(props.notes, compStore.summary?.bars ?? 8),
 );
@@ -47,13 +62,18 @@ const contentWidth = computed(
   () => KEY_WIDTH + totalMeasures.value * selection.zoomX,
 );
 
-const pitchRange = computed(() => visiblePitchRange(props.notes));
+const pitchRange = computed((): [number, number] => {
+  if (props.isDrum) return [0, Math.max(DRUM_MAP.length, drumRowCountForNotes(props.notes)) - 1];
+  return visiblePitchRange(props.notes);
+});
 const minMidi = computed(() => pitchRange.value[0]);
 const maxMidi = computed(() => pitchRange.value[1]);
-const rowCount = computed(() => maxMidi.value - minMidi.value + 1);
-const rowHeight = computed(() =>
-  Math.max(8, Math.min(16, viewportSize.value.height / Math.max(1, rowCount.value))),
+const rowCount = computed(() =>
+  props.isDrum ? drumRowCountForNotes(props.notes) : maxMidi.value - minMidi.value + 1,
 );
+const rowHeight = computed(() => ROW_HEIGHT);
+const contentHeight = computed(() => rowCount.value * ROW_HEIGHT);
+const maxScrollY = computed(() => Math.max(0, contentHeight.value - viewportSize.value.height));
 
 const filteredNotes = computed(() => {
   if (selection.selectedMeasure == null) return props.notes;
@@ -76,9 +96,34 @@ const dragState = ref<DragState | null>(null);
 const dragPreviewPitch = ref<number | null>(null);
 const rulerDragging = ref(false);
 
+interface BoxSelectState {
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+  additive: boolean;
+}
+
+const boxSelectState = ref<BoxSelectState | null>(null);
+
+function pitchRowY(pitchMidi: number): number {
+  if (props.isDrum) {
+    return drumRowToY(drumMidiToRowIndex(pitchMidi), rowHeight.value);
+  }
+  return pitchToY(pitchMidi, minMidi.value, maxMidi.value, rowHeight.value);
+}
+
+function noteToY(pitchMidi: number): number {
+  return pitchRowY(pitchMidi) - scrollY.value;
+}
+
 function yToPitch(y: number): number {
-  const pitch = maxMidi.value - Math.round(y / rowHeight.value);
-  return Math.max(0, Math.min(127, pitch));
+  const contentY = y + scrollY.value;
+  if (props.isDrum) {
+    return rowIndexToDrumMidi(yToDrumRowIndex(contentY, rowHeight.value, rowCount.value));
+  }
+  const pitch = maxMidi.value - Math.round(contentY / rowHeight.value);
+  return Math.max(minMidi.value, Math.min(maxMidi.value, pitch));
 }
 
 function displayPitch(note: PianoRollNote): number {
@@ -91,12 +136,56 @@ function displayPitch(note: PianoRollNote): number {
 function hitTest(x: number, y: number): PianoRollNote | null {
   for (const note of displayNotes.value) {
     const nx = noteX(note, beatsPerMeasure.value, selection.zoomX, selection.scrollX) + KEY_WIDTH;
-    const ny = pitchToY(note.pitchMidi, maxMidi.value, rowHeight.value);
+    const ny = noteToY(displayPitch(note));
     const nw = Math.max(noteWidth(note, beatsPerMeasure.value, selection.zoomX), 4);
     const nh = rowHeight.value - 2;
     if (x >= nx && x <= nx + nw && y >= ny && y <= ny + nh) return note;
   }
   return null;
+}
+
+function notesInBox(x1: number, y1: number, x2: number, y2: number): PianoRollNote[] {
+  const minX = Math.min(x1, x2);
+  const maxX = Math.max(x1, x2);
+  const minY = Math.min(y1, y2);
+  const maxY = Math.max(y1, y2);
+  return displayNotes.value.filter((note) => {
+    const nx = noteX(note, beatsPerMeasure.value, selection.zoomX, selection.scrollX) + KEY_WIDTH;
+    const ny = noteToY(displayPitch(note));
+    const nw = Math.max(noteWidth(note, beatsPerMeasure.value, selection.zoomX), 4);
+    const nh = rowHeight.value - 2;
+    return nx + nw >= minX && nx <= maxX && ny + nh >= minY && ny <= maxY;
+  });
+}
+
+function finishBoxSelect() {
+  const box = boxSelectState.value;
+  if (!box) return;
+  const hits = notesInBox(box.startX, box.startY, box.currentX, box.currentY);
+  selection.selectEvents(
+    hits.map((n) => n.nodeId),
+    box.additive,
+  );
+  boxSelectState.value = null;
+  redraw();
+}
+
+function clickToInsertParams(x: number, y: number) {
+  const gridX = Math.max(0, x - KEY_WIDTH);
+  const measure = xToMeasure(gridX, selection.zoomX, selection.scrollX);
+  const measureStartX = (measure - 1) * selection.zoomX - selection.scrollX;
+  const beatInMeasure = ((gridX - measureStartX) / selection.zoomX) * beatsPerMeasure.value;
+  const snappedBeat = snapGrid.snapBeat(beatInMeasure, beatsPerMeasure.value);
+  const numer = Math.max(0, Math.floor(snappedBeat));
+  const denom = snappedBeat % 1 > 0.001 ? Math.round(1 / (snappedBeat % 1)) : 1;
+  return {
+    measureGlobal: measure,
+    voiceId: selection.activeVoiceId ?? 0,
+    beatNumer: numer,
+    beatDenom: denom,
+    midi: yToPitch(y),
+    isDrum: props.isDrum ?? false,
+  };
 }
 
 function playheadX(): number {
@@ -194,16 +283,27 @@ function drawGrid() {
 
   ctx.fillStyle = cssColor('--key-bg', '#161b22');
   ctx.fillRect(0, 0, KEY_WIDTH, h);
-  ctx.fillStyle = cssColor('--text-muted', '#8b949e');
-  ctx.font = '10px monospace';
-  ctx.textAlign = 'right';
-  for (let midi = maxMidi.value; midi >= minMidi.value; midi--) {
-    const y = pitchToY(midi, maxMidi.value, rowHeight.value);
-    if (midi % 12 === 0) {
-      ctx.fillStyle = cssColor('--text-primary', '#e6edf3');
-      ctx.fillText(pitchLabel(midi), KEY_WIDTH - 6, y + rowHeight.value - 3);
-    }
-    ctx.strokeStyle = midi % 12 === 0 ? cssColor('--border-muted', '#30363d') : cssColor('--border-subtle', '#21262d');
+
+  for (let row = 0; row < rowCount.value; row++) {
+    const midi = props.isDrum
+      ? rowIndexToDrumMidi(row)
+      : maxMidi.value - row;
+    const y = row * rowHeight.value - scrollY.value;
+    if (y + rowHeight.value < 0 || y > h) continue;
+
+    const black = !props.isDrum && isBlackKey(midi);
+    ctx.fillStyle = black
+      ? cssColor('--key-black', '#0d1117')
+      : cssColor('--key-white', '#21262d');
+    ctx.fillRect(0, y, KEY_WIDTH, rowHeight.value - 1);
+
+    ctx.fillStyle = black ? cssColor('--text-muted', '#8b949e') : cssColor('--text-primary', '#e6edf3');
+    ctx.font = black ? '8px monospace' : '9px monospace';
+    ctx.textAlign = 'right';
+    const label = props.isDrum ? drumRowLabel(midi) : pitchLabel(midi);
+    ctx.fillText(label, KEY_WIDTH - 4, y + rowHeight.value - 4);
+
+    ctx.strokeStyle = black ? cssColor('--border-subtle', '#21262d') : cssColor('--border-muted', '#30363d');
     ctx.beginPath();
     ctx.moveTo(KEY_WIDTH, y);
     ctx.lineTo(w, y);
@@ -226,7 +326,7 @@ function drawGrid() {
   for (const note of displayNotes.value) {
     const pitchMidi = displayPitch(note);
     const x = noteX(note, beatsPerMeasure.value, selection.zoomX, selection.scrollX) + KEY_WIDTH;
-    const y = pitchToY(pitchMidi, maxMidi.value, rowHeight.value);
+    const y = noteToY(pitchMidi);
     const nw = Math.max(noteWidth(note, beatsPerMeasure.value, selection.zoomX), 4);
     const nh = rowHeight.value - 2;
     const colors = PROVENANCE_COLORS[note.provenanceSource];
@@ -238,6 +338,21 @@ function drawGrid() {
     ctx.setLineDash(note.provenanceSource === 'Repaired' ? [4, 2] : []);
     ctx.fillRect(x, y, nw, nh);
     ctx.strokeRect(x, y, nw, nh);
+    ctx.setLineDash([]);
+  }
+
+  const box = boxSelectState.value;
+  if (box) {
+    const bx = Math.min(box.startX, box.currentX);
+    const by = Math.min(box.startY, box.currentY);
+    const bw = Math.abs(box.currentX - box.startX);
+    const bh = Math.abs(box.currentY - box.startY);
+    ctx.fillStyle = 'rgba(88, 166, 255, 0.12)';
+    ctx.strokeStyle = cssColor('--accent', '#58a6ff');
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 2]);
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeRect(bx, by, bw, bh);
     ctx.setLineDash([]);
   }
 
@@ -303,10 +418,43 @@ function onMouseDown(e: MouseEvent) {
   if (!rect) return;
   const x = e.clientX - rect.left;
   const y = e.clientY - rect.top;
+
+  if (pianoTool.mode === 'brush') {
+    e.preventDefault();
+    void compStore.insertNote(clickToInsertParams(x, y));
+    return;
+  }
+
+  if (pianoTool.mode === 'box') {
+    e.preventDefault();
+    boxSelectState.value = {
+      startX: x,
+      startY: y,
+      currentX: x,
+      currentY: y,
+      additive: e.shiftKey,
+    };
+    if (!e.shiftKey) {
+      selection.clearSelection();
+    }
+    redraw();
+    return;
+  }
+
+  if (pianoTool.mode === 'eraser') {
+    const note = hitTest(x, y);
+    if (note) {
+      e.preventDefault();
+      void compStore.deleteNote(note.nodeId);
+    }
+    return;
+  }
+
   const note = hitTest(x, y);
   if (!note) return;
   e.preventDefault();
   selection.selectEvent(note.nodeId, e.shiftKey);
+  if (pianoTool.mode !== 'pointer') return;
   dragState.value = { note, originalPitch: note.pitchMidi, currentPitch: note.pitchMidi };
   dragPreviewPitch.value = note.pitchMidi;
   tooltip.value = null;
@@ -333,6 +481,12 @@ function onMouseMove(e: MouseEvent) {
   if (!rect) return;
   const x = e.clientX - rect.left;
   const y = e.clientY - rect.top;
+  if (boxSelectState.value) {
+    boxSelectState.value.currentX = x;
+    boxSelectState.value.currentY = y;
+    redraw();
+    return;
+  }
   if (dragState.value) {
     dragPreviewPitch.value = yToPitch(y);
     dragState.value.currentPitch = dragPreviewPitch.value;
@@ -357,6 +511,10 @@ function onMouseLeave() {
 }
 
 function onWindowMouseUp() {
+  if (boxSelectState.value) {
+    finishBoxSelect();
+    return;
+  }
   if (dragState.value) {
     finishDrag().catch(() => {
       /* surfaced via store */
@@ -368,7 +526,11 @@ function onWheel(e: WheelEvent) {
   if (e.ctrlKey) {
     e.preventDefault();
     selection.setZoom(selection.zoomX + (e.deltaY > 0 ? -4 : 4));
+    return;
   }
+  e.preventDefault();
+  scrollY.value = Math.max(0, Math.min(maxScrollY.value, scrollY.value + e.deltaY));
+  redraw();
 }
 
 let ro: ResizeObserver | null = null;
@@ -389,6 +551,26 @@ watch(
 );
 
 watch(
+  () => [props.notes, props.isDrum, minMidi.value, maxMidi.value],
+  () => {
+    scrollY.value = Math.min(scrollY.value, maxScrollY.value);
+    if (props.notes.length === 0 || props.isDrum) return;
+    let min = 127;
+    let max = 0;
+    for (const n of props.notes) {
+      min = Math.min(min, n.pitchMidi);
+      max = Math.max(max, n.pitchMidi);
+    }
+    const mid = (min + max) / 2;
+    const centerY = pitchRowY(mid);
+    scrollY.value = Math.max(
+      0,
+      Math.min(maxScrollY.value, centerY - viewportSize.value.height / 2),
+    );
+  },
+);
+
+watch(
   () => [
     props.notes,
     displayNotes.value,
@@ -400,7 +582,9 @@ watch(
     playback.globalBeat,
     playback.isPlaying,
     dragPreviewPitch.value,
+    boxSelectState.value,
     rowHeight.value,
+    scrollY.value,
   ],
   () => {
     redraw();
@@ -437,7 +621,12 @@ onUnmounted(() => {
     <div
       ref="viewportRef"
       class="piano-viewport"
-      :class="{ dragging: dragState !== null }"
+      :class="{
+        dragging: dragState !== null,
+        'tool-box': pianoTool.mode === 'box',
+        'tool-brush': pianoTool.mode === 'brush',
+        'tool-eraser': pianoTool.mode === 'eraser',
+      }"
       @mousedown="onMouseDown"
       @click="onClick"
       @mousemove="onMouseMove"
@@ -501,7 +690,19 @@ onUnmounted(() => {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  cursor: default;
+}
+
+.piano-viewport.tool-box {
   cursor: crosshair;
+}
+
+.piano-viewport.tool-brush {
+  cursor: cell;
+}
+
+.piano-viewport.tool-eraser {
+  cursor: not-allowed;
 }
 
 .piano-viewport.dragging {

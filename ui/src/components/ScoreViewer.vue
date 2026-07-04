@@ -1,31 +1,37 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref, watch } from 'vue';
 import ABCJS from 'abcjs';
-import { jsPDF } from 'jspdf';
-import { exportAbc, exportMusicXml } from '@/services/tauri';
+import ScoreViewport from '@/components/ScoreViewport.vue';
+import IconButton from '@/components/IconButton.vue';
+import { exportAbc, exportMusicXml, exportPdfBytes } from '@/services/tauri';
+import { promptAndSaveBytes } from '@/services/download';
 import { useI18n } from '@/composables/useI18n';
 import { useCompositionStore } from '@/stores/composition';
 import { usePlaybackStore } from '@/stores/playback';
-import { useSelectionStore } from '@/stores/selection';
+import { useSettingsStore } from '@/stores/settings';
 
 type TabId = 'abc' | 'musicxml' | 'pdf';
 
 const { t } = useI18n();
 const compStore = useCompositionStore();
 const playback = usePlaybackStore();
-const selection = useSelectionStore();
+const settings = useSettingsStore();
 
-const activeTab = ref<TabId>('abc');
+const activeTab = ref<TabId>('musicxml');
 const loading = ref(false);
 const error = ref<string | null>(null);
 const abcText = ref('');
 const musicXml = ref('');
 const svgMarkup = ref('');
+const pageCount = ref(1);
+const currentPage = ref(1);
 
 const abcContainer = ref<HTMLDivElement | null>(null);
 const svgContainer = ref<HTMLDivElement | null>(null);
 const pdfContainer = ref<HTMLDivElement | null>(null);
-const scorePaneRef = ref<HTMLDivElement | null>(null);
+const abcViewportRef = ref<InstanceType<typeof ScoreViewport> | null>(null);
+const svgViewportRef = ref<InstanceType<typeof ScoreViewport> | null>(null);
+const pdfViewportRef = ref<InstanceType<typeof ScoreViewport> | null>(null);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let verovioToolkit: any = null;
@@ -55,13 +61,17 @@ async function loadExports() {
   }
 }
 
+function scoreInkColor(): string {
+  return settings.theme === 'light' ? '#1a1a1a' : '#e6edf3';
+}
+
 function renderAbc() {
   if (!abcContainer.value || !abcText.value) return;
   abcContainer.value.innerHTML = '';
   ABCJS.renderAbc(abcContainer.value, abcText.value, {
     responsive: 'resize',
     add_classes: true,
-    foregroundColor: '#1a1a1a',
+    foregroundColor: scoreInkColor(),
     wrap: {
       minSpacing: 1.8,
       maxSpacing: 2.7,
@@ -73,8 +83,22 @@ function renderAbc() {
 async function renderMusicXml() {
   if (!musicXml.value) return;
   const toolkit = await ensureVerovio();
+  toolkit.setOptions(
+    JSON.stringify({
+      adjustPageHeight: true,
+      mmOutput: true,
+      spacingSystem: 12,
+      spacingStaff: 6,
+      breaks: 'auto',
+      scale: 40,
+    }),
+  );
   toolkit.loadData(musicXml.value);
-  svgMarkup.value = toolkit.renderToSVG(1, {});
+  pageCount.value = Math.max(1, toolkit.getPageCount());
+  if (currentPage.value > pageCount.value) {
+    currentPage.value = 1;
+  }
+  svgMarkup.value = toolkit.renderToSVG(currentPage.value, {});
   if (svgContainer.value) {
     svgContainer.value.innerHTML = svgMarkup.value;
   }
@@ -91,70 +115,41 @@ async function renderActiveTab() {
   await nextTick();
   if (activeTab.value === 'abc') {
     renderAbc();
+    requestAnimationFrame(() => abcViewportRef.value?.fitToContainer());
   } else if (activeTab.value === 'musicxml') {
     await renderMusicXml();
+    requestAnimationFrame(() => svgViewportRef.value?.fitToContainer());
   } else {
     await renderPdfPreview();
+    requestAnimationFrame(() => pdfViewportRef.value?.fitToContainer());
   }
-  syncScrollToPlayhead();
 }
 
-function activeScrollContainer(): HTMLElement | null {
-  if (activeTab.value === 'abc') return abcContainer.value;
-  if (activeTab.value === 'musicxml') return svgContainer.value;
-  return pdfContainer.value;
-}
-
-function syncScrollToPlayhead() {
-  const el = activeScrollContainer();
-  if (!el || el.scrollWidth <= el.clientWidth) return;
-  const ratio = playback.playheadRatio;
-  const maxScroll = el.scrollWidth - el.clientWidth;
-  el.scrollLeft = ratio * maxScroll;
+async function onPageChange(page: number) {
+  currentPage.value = page;
+  if (activeTab.value === 'musicxml' || activeTab.value === 'pdf') {
+    await renderMusicXml();
+    if (activeTab.value === 'pdf' && pdfContainer.value) {
+      pdfContainer.value.innerHTML = svgMarkup.value;
+    }
+    requestAnimationFrame(() => {
+      svgViewportRef.value?.fitToContainer();
+      pdfViewportRef.value?.fitToContainer();
+    });
+  }
 }
 
 async function downloadPdf() {
-  if (!svgMarkup.value) {
-    await renderMusicXml();
+  try {
+    error.value = null;
+    const bytes = await exportPdfBytes();
+    const name = `${compStore.summary?.title ?? 'aurora'}.pdf`;
+    await promptAndSaveBytes(name, new Uint8Array(bytes), [
+      { name: 'PDF', extensions: ['pdf'] },
+    ]);
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
   }
-  if (!svgMarkup.value) return;
-
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(svgMarkup.value, 'image/svg+xml');
-  const svgEl = doc.documentElement;
-  const width = Number(svgEl.getAttribute('width')?.replace(/[^\d.]/g, '') || 800);
-  const height = Number(svgEl.getAttribute('height')?.replace(/[^\d.]/g, '') || 600);
-
-  const blob = new Blob([svgMarkup.value], { type: 'image/svg+xml;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const img = new Image();
-
-  await new Promise<void>((resolve, reject) => {
-    img.onload = () => resolve();
-    img.onerror = () => reject(new Error('Failed to rasterize score SVG'));
-    img.src = url;
-  });
-
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    URL.revokeObjectURL(url);
-    return;
-  }
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, width, height);
-  ctx.drawImage(img, 0, 0, width, height);
-  URL.revokeObjectURL(url);
-
-  const pdf = new jsPDF({
-    orientation: width > height ? 'landscape' : 'portrait',
-    unit: 'pt',
-    format: [width, height],
-  });
-  pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, width, height);
-  pdf.save(`${compStore.summary?.title ?? 'aurora'}.pdf`);
 }
 
 watch(activeTab, () => {
@@ -175,7 +170,7 @@ watch(
 );
 
 watch(
-  () => compStore.pianoRollNotes,
+  () => compStore.revision,
   () => {
     if (compStore.summary) {
       loadExports().catch(() => {
@@ -183,12 +178,16 @@ watch(
       });
     }
   },
-  { deep: true },
 );
 
 watch(
-  () => [playback.playheadRatio, playback.globalBeat, selection.scrollX],
-  () => syncScrollToPlayhead(),
+  () => settings.theme,
+  () => {
+    if (activeTab.value === 'abc') {
+      renderAbc();
+      requestAnimationFrame(() => abcViewportRef.value?.fitToContainer());
+    }
+  },
 );
 
 onMounted(() => {
@@ -201,16 +200,15 @@ onMounted(() => {
 </script>
 
 <template>
-  <section ref="scorePaneRef" class="score-viewer panel">
+  <section class="score-viewer panel">
     <div class="header-row">
       <h2>{{ t('score.title') }}</h2>
-      <button
-        class="refresh-btn"
+      <IconButton
+        icon="refresh"
+        :title="loading ? t('score.loading') : t('score.refresh')"
         :disabled="!compStore.summary || loading"
         @click="loadExports"
-      >
-        {{ loading ? t('score.loading') : t('score.refresh') }}
-      </button>
+      />
     </div>
 
     <div class="tabs">
@@ -240,14 +238,37 @@ onMounted(() => {
     <p v-if="error" class="error">{{ error }}</p>
     <p v-else-if="!compStore.summary" class="empty">{{ t('score.empty') }}</p>
 
-    <div v-show="activeTab === 'abc'" ref="abcContainer" class="score-pane abc-pane panel-scroll" />
-    <div
-      v-show="activeTab === 'musicxml'"
-      ref="svgContainer"
-      class="score-pane svg-pane panel-scroll"
-    />
-    <div v-show="activeTab === 'pdf'" class="pdf-tab">
-      <div ref="pdfContainer" class="score-pane svg-pane panel-scroll" />
+    <ScoreViewport
+      v-show="activeTab === 'abc' && compStore.summary"
+      ref="abcViewportRef"
+      class="score-viewport-wrap"
+    >
+      <div ref="abcContainer" class="score-content" />
+    </ScoreViewport>
+
+    <ScoreViewport
+      v-show="activeTab === 'musicxml' && compStore.summary"
+      ref="svgViewportRef"
+      class="score-viewport-wrap"
+      :show-paging="true"
+      :page-count="pageCount"
+      :current-page="currentPage"
+      @update:current-page="onPageChange"
+    >
+      <div ref="svgContainer" class="score-content" />
+    </ScoreViewport>
+
+    <div v-show="activeTab === 'pdf' && compStore.summary" class="pdf-tab">
+      <ScoreViewport
+        ref="pdfViewportRef"
+        class="score-viewport-wrap"
+        :show-paging="true"
+        :page-count="pageCount"
+        :current-page="currentPage"
+        @update:current-page="onPageChange"
+      >
+        <div ref="pdfContainer" class="score-content" />
+      </ScoreViewport>
       <button class="download-pdf" :disabled="!compStore.summary" @click="downloadPdf">
         {{ t('score.downloadPdf') }}
       </button>
@@ -287,16 +308,6 @@ onMounted(() => {
   color: var(--text-muted);
 }
 
-.refresh-btn {
-  padding: 0.25rem 0.6rem;
-  font-size: 0.75rem;
-  border: 1px solid var(--border-muted);
-  border-radius: 4px;
-  background: var(--bg-panel-elevated);
-  color: inherit;
-  cursor: pointer;
-}
-
 .tabs {
   display: flex;
   gap: 0.35rem;
@@ -326,14 +337,13 @@ onMounted(() => {
   cursor: not-allowed;
 }
 
-.score-pane {
+.score-viewport-wrap {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  background: var(--score-paper);
-  color: var(--score-ink);
-  border-radius: 4px;
-  padding: 0.5rem;
+}
+
+.score-content {
+  display: inline-block;
 }
 
 .pdf-tab {
@@ -346,6 +356,9 @@ onMounted(() => {
 
 .download-pdf {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   padding: 0.4rem 0.75rem;
   border: 1px solid var(--border-muted);
   border-radius: 6px;

@@ -5,6 +5,7 @@ export interface NodeId {
 
 export interface UiParameterSnapshot {
   key: number;
+  mode: string;
   style: string;
   beam_width: number;
   bars: number;
@@ -14,6 +15,12 @@ export interface UiParameterSnapshot {
   harmony_complexity: number;
   counterpoint_strictness: number;
   drum_density: number;
+  drum_accent_emphasis: number;
+  drum_hihat_density: number;
+  progression_mode: string;
+  tonal_conservatism: number;
+  accompaniment_instrument: string;
+  seed: number;
 }
 
 export interface CompositionSummary {
@@ -39,8 +46,18 @@ export interface JobProgressEvent {
   job_id: string;
   stage_name: string;
   stage_index: number;
+  total_stages: number;
   percent: number;
   message: string;
+}
+
+/** Overall pipeline progress in [0, 1] from stage index + within-stage percent. */
+export function overallJobProgress(event: JobProgressEvent | null, generating = false): number {
+  if (!event) return generating ? 0 : 0;
+  const total = Math.max(1, event.total_stages ?? 14);
+  const stage = Math.max(1, Math.min(total, event.stage_index ?? 1));
+  const within = Math.max(0, Math.min(1, event.percent ?? 0));
+  return Math.min(1, (stage - 1 + within) / total);
 }
 
 export interface JobCompleteEvent {
@@ -277,9 +294,32 @@ export interface VoiceDef {
   name: string;
 }
 
+export interface TimeSignature {
+  beats: number;
+  beat_type: number;
+}
+
+export interface MeterMap {
+  default: TimeSignature;
+  changes: Array<{ at_measure: number; meter: TimeSignature }>;
+}
+
+export interface KeySignature {
+  tonic: { pc: number };
+  mode: string;
+}
+
+export interface KeyMap {
+  default: KeySignature;
+}
+
 export interface Composition {
   metadata: { title: string; parameters_used: unknown };
-  global: { tempo_map: { default_bpm: number } };
+  global: {
+    tempo_map: { default_bpm: number };
+    meter_map: MeterMap;
+    key_map: KeyMap;
+  };
   voice_registry: { voices: VoiceDef[] };
   movements: Movement[];
 }

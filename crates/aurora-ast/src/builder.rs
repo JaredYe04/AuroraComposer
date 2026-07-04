@@ -272,9 +272,149 @@ fn default_voice_registry(count: u16) -> VoiceRegistry {
     }
 }
 
+/// Empty editable score with Melody / Bass / Drums — used before generation.
+#[must_use]
+pub fn blank_workbench(title: impl Into<String>, bars: u16, bpm: f64, key_pc: u8) -> Composition {
+    let measure_count = bars.max(1);
+    let mut comp = CompositionBuilder::new()
+        .title(title)
+        .voices(3)
+        .measures(measure_count)
+        .build();
+
+    comp.metadata.source = CompositionSource::Manual;
+    comp.global.tempo_map.default_bpm = f64::from(bpm);
+    comp.global.key_map.default.tonic.pc = key_pc;
+    comp.global.default_key.tonic.pc = key_pc;
+
+    comp.voice_registry = workbench_voice_registry();
+    comp.metadata.layout.part_list_order = comp.voice_registry.voices.iter().map(|v| v.id).collect();
+
+    for movement in &mut comp.movements {
+        for section in &mut movement.sections {
+            for phrase in &mut section.phrases {
+                for measure in &mut phrase.measures {
+                    measure.voices = comp
+                        .voice_registry
+                        .voices
+                        .iter()
+                        .map(|v| MeasureVoice {
+                            voice_id: v.id,
+                            events: Vec::new(),
+                        })
+                        .collect();
+                }
+            }
+        }
+    }
+
+    comp
+}
+
+fn workbench_voice_registry() -> VoiceRegistry {
+    VoiceRegistry {
+        voices: vec![
+            VoiceDef {
+                id: VoiceId(0),
+                name: "Melody".into(),
+                role: VoiceRole::Melody,
+                register: PitchRange {
+                    min_midi: 55,
+                    max_midi: 84,
+                    preferred_min: 60,
+                    preferred_max: 79,
+                },
+                midi_channel: 1,
+                group: None,
+                instrument: InstrumentSpec {
+                    gm_program: 0,
+                    name: "Piano".into(),
+                    transposition: 0,
+                    clef: Clef::Treble,
+                    staff_lines: 5,
+                },
+                export: VoiceExportSpec {
+                    musicxml_part_id: "P1".into(),
+                    staff_index: 0,
+                    abbrev: None,
+                    hide_if_empty: false,
+                },
+                priority: 0,
+                mutable: true,
+            },
+            VoiceDef {
+                id: VoiceId(1),
+                name: "Bass".into(),
+                role: VoiceRole::Bass,
+                register: PitchRange {
+                    min_midi: 36,
+                    max_midi: 60,
+                    preferred_min: 40,
+                    preferred_max: 55,
+                },
+                midi_channel: 2,
+                group: None,
+                instrument: InstrumentSpec {
+                    gm_program: 32,
+                    name: "Acoustic Bass".into(),
+                    transposition: 0,
+                    clef: Clef::Bass,
+                    staff_lines: 5,
+                },
+                export: VoiceExportSpec {
+                    musicxml_part_id: "P2".into(),
+                    staff_index: 1,
+                    abbrev: Some("B".into()),
+                    hide_if_empty: false,
+                },
+                priority: 1,
+                mutable: true,
+            },
+            VoiceDef {
+                id: VoiceId(2),
+                name: "Drums".into(),
+                role: VoiceRole::Drums,
+                register: PitchRange {
+                    min_midi: 35,
+                    max_midi: 81,
+                    preferred_min: 36,
+                    preferred_max: 51,
+                },
+                midi_channel: 10,
+                group: None,
+                instrument: InstrumentSpec {
+                    gm_program: 0,
+                    name: "Standard Kit".into(),
+                    transposition: 0,
+                    clef: Clef::Percussion,
+                    staff_lines: 5,
+                },
+                export: VoiceExportSpec {
+                    musicxml_part_id: "P3".into(),
+                    staff_index: 2,
+                    abbrev: Some("Dr".into()),
+                    hide_if_empty: false,
+                },
+                priority: 2,
+                mutable: true,
+            },
+        ],
+        groups: vec![],
+        default_layout: VoiceLayoutId(0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blank_workbench_has_three_voices() {
+        let comp = blank_workbench("Test", 8, 120.0, 0);
+        assert_eq!(comp.voice_registry.voices.len(), 3);
+        assert_eq!(comp.voice_registry.voices[2].name, "Drums");
+        assert_eq!(comp.movements[0].sections[0].phrases[0].measures.len(), 8);
+    }
 
     #[test]
     fn builder_creates_one_measure_with_voices() {

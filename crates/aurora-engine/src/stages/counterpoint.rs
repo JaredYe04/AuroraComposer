@@ -5,19 +5,29 @@ use aurora_ast::{
 use aurora_core::NodeId;
 use aurora_rules::{
     AstSnapshot, BeamSearchEngine, CandidateGenerator, CandidatePatch, ChordSymbol as RuleChord,
-    KeySignature as RuleKey, Mode as RuleMode, NodeId as RuleNodeId, Pitch as RulePitch,
+    KeySignature as RuleKey, NodeId as RuleNodeId, Pitch as RulePitch,
     PitchClass as RulePitchClass, SearchState, StepCountTerminal, VoiceId as RuleVoiceId,
     search_note,
 };
 
 use super::common::{
-    alto_voice_id, collect_melody_pitches, iter_measures, iter_measures_mut,
-    make_search_note_provenance, push_note,
+    alto_voice_id, collect_melody_pitches, collect_per_beat_chord_grid, iter_measures,
+    iter_measures_mut, make_search_note_provenance, push_note,
 };
+use crate::progression::parse_mode;
+use super::chord_voice::generate_chord_voice;
+use super::harmony_pad::generate_harmony_pad;
 use super::PipelineState;
 
-/// Stage 8 — Counterpoint: inner alto voice via beam search (skipped when homophonic).
+/// Stage 8 — Counterpoint: alto beam search, or HarmonyPad when homophonic.
 pub fn generate_counterpoint(state: &mut PipelineState, created_at: &str) -> Result<(), String> {
+    if super::common::harmony_pad_enabled(state) {
+        return generate_harmony_pad(state, created_at);
+    }
+    if super::common::accompaniment_enabled(state) {
+        return generate_chord_voice(state, created_at);
+    }
+
     let Some(alto_id) = alto_voice_id(state) else {
         return Ok(());
     };
@@ -26,17 +36,13 @@ pub fn generate_counterpoint(state: &mut PipelineState, created_at: &str) -> Res
     let bar_count = super::total_bars(&state.params);
     let total_steps = bar_count as usize * beats_per_measure;
 
-    let chord_grid = collect_chord_grid(state, bar_count as usize);
+    let chord_grid = collect_per_beat_chord_grid(state, total_steps);
     let measure_ids = collect_measure_ids(state);
 
     let tonic_pc = state.params.mode.key % 12;
     let rule_key = RuleKey {
         tonic: RulePitchClass { pc: tonic_pc },
-        mode: if state.params.mode.mode.to_lowercase().contains("minor") {
-            RuleMode::NaturalMinor
-        } else {
-            RuleMode::Major
-        },
+        mode: parse_mode(&state.params.mode.mode),
     };
 
     let alto_register = (
@@ -204,13 +210,18 @@ struct AltoCandidateGenerator {
 }
 
 impl CandidateGenerator for AltoCandidateGenerator {
+    fn voice_role(&self) -> aurora_rules::VoiceRole {
+        aurora_rules::VoiceRole::Alto
+    }
+
     fn generate(&self, state: &SearchState) -> Vec<CandidatePatch> {
         let step = state.step_index as usize;
         let beat = step % usize::from(self.beats_per_measure);
         let measure_idx = step / usize::from(self.beats_per_measure);
         let chord = self
             .chord_grid
-            .get(measure_idx)
+            .get(step)
+            .or_else(|| self.chord_grid.get(measure_idx))
             .cloned()
             .unwrap_or_else(|| RuleChord::simple(0, aurora_ast::ChordQuality::Major, "C"));
 

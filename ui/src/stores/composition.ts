@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 import { ref, toValue } from 'vue';
 import {
   applyNotePatch,
+  deleteNote as deleteNoteCmd,
   exportAbc,
   exportMidi,
   exportMusicXml,
@@ -9,11 +10,13 @@ import {
   generateComposition,
   getComposition,
   getTimeline,
+  insertNote as insertNoteCmd,
   loadProject,
   onJobComplete,
   onJobProgress,
 } from '@/services/tauri';
 import { playMidiBytes, stopPlayback } from '@/services/player';
+import { promptAndSaveBytes, promptAndSaveText } from '@/services/download';
 import type {
   Composition,
   CompositionSummary,
@@ -24,8 +27,21 @@ import type {
   TimelineModel,
 } from '@/types/aurora';
 import { extractPianoRollNotes } from '@/utils/pianoRoll';
+import { summaryFromComposition } from '@/utils/compositionSummary';
 import { useParameterStore } from './parameters';
 import { usePlaybackStore } from './playback';
+import { usePatternsStore } from './patterns';
+import { usePlaylistStore } from './playlist';
+import { useSelectionStore } from './selection';
+
+export interface InsertNoteParams {
+  measureGlobal: number;
+  voiceId: number;
+  beatNumer: number;
+  beatDenom: number;
+  midi: number;
+  isDrum: boolean;
+}
 
 export const useCompositionStore = defineStore('composition', () => {
   const summary = ref<CompositionSummary | null>(null);
@@ -34,10 +50,12 @@ export const useCompositionStore = defineStore('composition', () => {
   const pianoRollNotes = ref<PianoRollNote[]>([]);
   const progress = ref<JobProgressEvent | null>(null);
   const generating = ref(false);
+  const playing = ref(false);
   const error = ref<string | null>(null);
+  const exportError = ref<string | null>(null);
   const lastAbc = ref<string | null>(null);
   const lastSvgPreview = ref<string | null>(null);
-  const playing = ref(false);
+  const revision = ref(0);
 
   let eventsSubscribed = false;
 
@@ -57,13 +75,82 @@ export const useCompositionStore = defineStore('composition', () => {
 
   async function loadComposition() {
     try {
+      error.value = null;
       composition.value = await getComposition();
       timeline.value = await getTimeline();
+      if (composition.value) {
+        summary.value = summaryFromComposition(composition.value);
+      }
+      const selection = useSelectionStore();
+      const playback = usePlaybackStore();
+      if (
+        composition.value &&
+        selection.activeVoiceId == null &&
+        composition.value.voice_registry.voices.length > 0
+      ) {
+        selection.setActiveVoice(composition.value.voice_registry.voices[0].id);
+      }
       pianoRollNotes.value = composition.value
-        ? extractPianoRollNotes(composition.value)
+        ? extractPianoRollNotes(
+            composition.value,
+            selection.activeVoiceId ?? undefined,
+          )
         : [];
+      revision.value += 1;
+      ensureWorkspacePatterns();
+      if (composition.value) {
+        const bpm = composition.value.global.tempo_map.default_bpm;
+        const bpmPerMeasure = composition.value.global.meter_map.default.beats;
+        const bars = summary.value?.bars ?? 8;
+        playback.setTimelineContext(bars, bpm, bpmPerMeasure);
+      }
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  function ensureWorkspacePatterns() {
+    const patterns = usePatternsStore();
+    const playlist = usePlaylistStore();
+    const beatsPerMeasure = composition.value?.global.meter_map.default.beats ?? 4;
+    const bars = summary.value?.bars ?? useParameterStore().snapshot.bars ?? 8;
+    const tempo = summary.value?.tempo_bpm ?? 120;
+    const pat = patterns.ensureDefault({
+      bars,
+      beatsPerMeasure,
+      tempoBpm: tempo,
+    });
+    if (playlist.clips.length === 0) {
+      playlist.seedFromPattern(pat.id, pat.bars * pat.beatsPerMeasure);
+    }
+  }
+
+  async function initWorkspace() {
+    await loadComposition();
+  }
+
+  function syncPatternsFromSummary() {
+    if (!summary.value || !composition.value) return;
+    const patterns = usePatternsStore();
+    const playlist = usePlaylistStore();
+    const beatsPerMeasure = composition.value.global.meter_map.default.beats;
+    if (patterns.patterns.length <= 1) {
+      const active = patterns.activePatternId
+        ? patterns.patterns.find((p) => p.id === patterns.activePatternId)
+        : null;
+      if (active) {
+        active.bars = summary.value.bars;
+        active.beatsPerMeasure = beatsPerMeasure;
+        active.tempoBpm = summary.value.tempo_bpm;
+      }
+    } else {
+      patterns.registerFromComposition(summary.value, beatsPerMeasure);
+    }
+    if (playlist.clips.length === 0 && patterns.activePatternId) {
+      const pat = patterns.patterns.find((p) => p.id === patterns.activePatternId);
+      if (pat) {
+        playlist.seedFromPattern(pat.id, pat.bars * pat.beatsPerMeasure);
+      }
     }
   }
 
@@ -71,11 +158,19 @@ export const useCompositionStore = defineStore('composition', () => {
     const paramStore = useParameterStore();
     generating.value = true;
     error.value = null;
-    progress.value = null;
+    progress.value = {
+      job_id: '',
+      stage_name: 'Pipeline',
+      stage_index: 0,
+      total_stages: 14,
+      percent: 0,
+      message: 'Starting generation…',
+    };
     try {
       await subscribeEvents();
       summary.value = await generateComposition(toValue(paramStore.snapshot));
       await loadComposition();
+      syncPatternsFromSummary();
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e);
     } finally {
@@ -84,47 +179,41 @@ export const useCompositionStore = defineStore('composition', () => {
   }
 
   async function downloadMidi() {
+    exportError.value = null;
     try {
       const bytes = await exportMidi();
-      const blob = new Blob([new Uint8Array(bytes)], { type: 'audio/midi' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${summary.value?.title ?? 'aurora'}.mid`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const name = `${summary.value?.title ?? 'aurora'}.mid`;
+      await promptAndSaveBytes(name, new Uint8Array(bytes), [
+        { name: 'MIDI', extensions: ['mid', 'midi'] },
+      ]);
     } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e);
+      exportError.value = e instanceof Error ? e.message : String(e);
     }
   }
 
   async function downloadMusicXml() {
+    exportError.value = null;
     try {
       const xml = await exportMusicXml();
-      const blob = new Blob([xml], { type: 'application/xml' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${summary.value?.title ?? 'aurora'}.musicxml`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const name = `${summary.value?.title ?? 'aurora'}.musicxml`;
+      await promptAndSaveText(name, xml, [
+        { name: 'MusicXML', extensions: ['musicxml', 'xml'] },
+      ]);
     } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e);
+      exportError.value = e instanceof Error ? e.message : String(e);
     }
   }
 
   async function downloadAbc() {
+    exportError.value = null;
     try {
       lastAbc.value = await exportAbc();
-      const blob = new Blob([lastAbc.value], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${summary.value?.title ?? 'aurora'}.abc`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const name = `${summary.value?.title ?? 'aurora'}.abc`;
+      await promptAndSaveText(name, lastAbc.value, [
+        { name: 'ABC', extensions: ['abc'] },
+      ]);
     } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e);
+      exportError.value = e instanceof Error ? e.message : String(e);
     }
   }
 
@@ -141,12 +230,13 @@ export const useCompositionStore = defineStore('composition', () => {
     try {
       error.value = null;
       const bytes = await exportMidi();
-      if (summary.value) {
-        playback.setTimelineContext(summary.value.bars, summary.value.tempo_bpm);
-      }
+      const bpm = summary.value?.tempo_bpm ?? 120;
+      const beatsPerMeasure =
+        composition.value?.global.meter_map.default.beats ?? 4;
+      playback.onPlayStart(bpm, 0, beatsPerMeasure);
       const duration = await playMidiBytes(bytes);
+      playback.setFromMidi(duration, bpm, beatsPerMeasure);
       playing.value = true;
-      playback.onPlayStart(summary.value?.tempo_bpm ?? 120, duration);
     } catch (e) {
       playing.value = false;
       playback.onPlayStop();
@@ -171,6 +261,26 @@ export const useCompositionStore = defineStore('composition', () => {
     }
   }
 
+  async function deleteNote(nodeId: NodeId) {
+    try {
+      error.value = null;
+      summary.value = await deleteNoteCmd(nodeId);
+      await loadComposition();
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function insertNote(params: InsertNoteParams) {
+    try {
+      error.value = null;
+      summary.value = await insertNoteCmd(params);
+      await loadComposition();
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    }
+  }
+
   async function loadFromProject(path: string) {
     try {
       error.value = null;
@@ -181,17 +291,28 @@ export const useCompositionStore = defineStore('composition', () => {
     }
   }
 
-  function clearAfterNew() {
-    summary.value = null;
-    composition.value = null;
-    timeline.value = null;
-    pianoRollNotes.value = [];
+  async function resetWorkspace(summaryFromBackend?: CompositionSummary) {
+    const playback = usePlaybackStore();
+    playing.value = false;
+    playback.onPlayStop();
     progress.value = null;
     error.value = null;
+    exportError.value = null;
     lastAbc.value = null;
     lastSvgPreview.value = null;
-    playing.value = false;
-    usePlaybackStore().onPlayStop();
+    if (summaryFromBackend) {
+      summary.value = summaryFromBackend;
+    }
+    usePlaylistStore().clearAll();
+    usePatternsStore().resetToDefault({
+      bars: summaryFromBackend?.bars ?? 8,
+      tempoBpm: summaryFromBackend?.tempo_bpm ?? 120,
+    });
+    await loadComposition();
+  }
+
+  function clearAfterNew() {
+    void resetWorkspace();
   }
 
   return {
@@ -202,11 +323,15 @@ export const useCompositionStore = defineStore('composition', () => {
     progress,
     generating,
     error,
+    exportError,
+    revision,
     lastAbc,
     lastSvgPreview,
     playing,
     generate,
     loadComposition,
+    initWorkspace,
+    resetWorkspace,
     downloadMidi,
     downloadMusicXml,
     downloadAbc,
@@ -214,6 +339,8 @@ export const useCompositionStore = defineStore('composition', () => {
     play,
     stop,
     patchNote,
+    deleteNote,
+    insertNote,
     loadFromProject,
     clearAfterNew,
   };

@@ -79,25 +79,13 @@ impl PipelineOrchestrator {
 
         let created_at = chrono::Utc::now().to_rfc3339();
 
+        self.report_stage_start(1, "Resolving style preset…");
         let style = resolve_style(&params);
-        report(
-            &self.progress.as_ref(),
-            STAGE_NAMES[0],
-            1,
-            TOTAL_STAGES,
-            1.0,
-            "Resolved style preset and rule bundles",
-        );
+        self.report_stage_done(1, "Resolved style preset and rule bundles");
 
+        self.report_stage_start(2, "Mapping emotion to weights…");
         let (emotion, weight_deltas) = resolve_emotion(&params);
-        report(
-            &self.progress.as_ref(),
-            STAGE_NAMES[1],
-            2,
-            TOTAL_STAGES,
-            1.0,
-            "Mapped emotion dimensions to weight deltas",
-        );
+        self.report_stage_done(2, "Mapped emotion dimensions to weight deltas");
 
         let mut state = PipelineState::new(
             params.clone(),
@@ -107,72 +95,43 @@ impl PipelineOrchestrator {
             weight_deltas,
         );
 
+        self.report_stage_start(3, "Planning sections and measures…");
         plan_structure(&mut state, &created_at).map_err(|msg| Self::stage_err(3, msg))?;
-        report(
-            &self.progress.as_ref(),
-            STAGE_NAMES[2],
+        self.report_stage_done(
             3,
-            TOTAL_STAGES,
-            1.0,
             format!("Planned {} bars in 4/4", crate::stages::total_bars(&params)),
         );
 
+        self.report_stage_start(4, "Planning themes and phrases…");
         plan_themes(&mut state, &created_at).map_err(|msg| Self::stage_err(4, msg))?;
-        report(
-            &self.progress.as_ref(),
-            STAGE_NAMES[3],
+        plan_phrases(&mut state).map_err(|msg| Self::stage_err(4, msg))?;
+        apply_cadence_constraints(&mut state).map_err(|msg| Self::stage_err(4, msg))?;
+        self.report_stage_done(
             4,
-            TOTAL_STAGES,
-            1.0,
             format!(
                 "Assigned {} theme slot(s)",
                 state.params.theme.theme_count.max(1)
             ),
         );
 
-        plan_phrases(&mut state).map_err(|msg| Self::stage_err(4, msg))?;
-        apply_cadence_constraints(&mut state).map_err(|msg| Self::stage_err(4, msg))?;
-
+        self.report_stage_start(5, "Generating chord progression…");
         generate_harmony(&mut state, &created_at).map_err(|msg| Self::stage_err(5, msg))?;
-        report(
-            &self.progress.as_ref(),
-            STAGE_NAMES[4],
-            5,
-            TOTAL_STAGES,
-            1.0,
-            "Generated chord progression skeleton",
-        );
+        self.report_stage_done(5, "Generated chord progression skeleton");
 
+        self.report_stage_start(6, "Applying rhythm skeleton…");
         generate_rhythm(&mut state, &created_at).map_err(|msg| Self::stage_err(6, msg))?;
-        report(
-            &self.progress.as_ref(),
-            STAGE_NAMES[5],
-            6,
-            TOTAL_STAGES,
-            1.0,
-            "Applied rhythm skeleton patterns",
-        );
+        self.report_stage_done(6, "Applied rhythm skeleton patterns");
 
+        self.report_stage_start(7, "Searching melody (beam search)…");
         generate_melody(&mut state, &created_at).map_err(|msg| Self::search_err(msg))?;
-        report(
-            &self.progress.as_ref(),
-            STAGE_NAMES[6],
-            7,
-            TOTAL_STAGES,
-            1.0,
-            "Committed beam-search melody with provenance",
-        );
-
         validate_phrase_terminals(&mut state).map_err(|msg| Self::stage_err(7, msg))?;
+        self.report_stage_done(7, "Committed beam-search melody with provenance");
 
+        self.report_stage_start(8, "Generating counterpoint…");
         generate_counterpoint(&mut state, &created_at)
             .map_err(|msg| Self::stage_err(8, msg))?;
-        report(
-            &self.progress.as_ref(),
-            STAGE_NAMES[7],
+        self.report_stage_done(
             8,
-            TOTAL_STAGES,
-            1.0,
             if crate::stages::common::counterpoint_enabled(&state) {
                 "Generated inner alto voice via beam search"
             } else {
@@ -180,70 +139,61 @@ impl PipelineOrchestrator {
             },
         );
 
+        self.report_stage_start(9, "Generating bass line…");
         generate_bass(&mut state, &created_at).map_err(|msg| Self::stage_err(9, msg))?;
-        report(
-            &self.progress.as_ref(),
-            STAGE_NAMES[8],
-            9,
-            TOTAL_STAGES,
-            1.0,
-            "Generated bass line via narrow beam search",
-        );
+        self.report_stage_done(9, "Generated bass line via narrow beam search");
 
+        self.report_stage_start(10, "Generating drum patterns…");
         generate_drums(&mut state, &created_at).map_err(|msg| Self::stage_err(10, msg))?;
-        report(
-            &self.progress.as_ref(),
-            STAGE_NAMES[9],
-            10,
-            TOTAL_STAGES,
-            1.0,
-            "Generated drum patterns on channel 10",
-        );
+        self.report_stage_done(10, "Generated drum patterns on channel 10");
 
+        self.report_stage_start(11, "Applying decoration…");
         apply_decoration(&mut state, &created_at).map_err(|msg| Self::stage_err(11, msg))?;
-        report(
-            &self.progress.as_ref(),
-            STAGE_NAMES[10],
-            11,
-            TOTAL_STAGES,
-            1.0,
-            "Applied ornamental enrichment",
-        );
+        self.report_stage_done(11, "Applied ornamental enrichment");
 
+        self.report_stage_start(12, "Repairing soft violations…");
         repair_composition(&mut state, &created_at).map_err(|msg| Self::stage_err(12, msg))?;
-        report(
-            &self.progress.as_ref(),
-            STAGE_NAMES[11],
+        self.report_stage_done(
             12,
-            TOTAL_STAGES,
-            1.0,
             format!(
                 "Repaired {} soft violation(s)",
                 state.phrase_violations.len()
             ),
         );
 
+        self.report_stage_start(13, "Validating constraints…");
         validate_composition(&mut state).map_err(|msg| Self::stage_err(13, msg))?;
-        report(
-            &self.progress.as_ref(),
-            STAGE_NAMES[12],
-            13,
-            TOTAL_STAGES,
-            1.0,
-            "Passed hard constraint validation",
-        );
+        self.report_stage_done(13, "Passed hard constraint validation");
 
+        self.report_stage_start(14, "Finalizing export metadata…");
         finalize_export(&mut state, &created_at).map_err(|msg| Self::stage_err(14, msg))?;
-        report(
-            &self.progress.as_ref(),
-            STAGE_NAMES[13],
-            14,
-            TOTAL_STAGES,
-            1.0,
-            "Pipeline complete — ready for IR export",
-        );
+        self.report_stage_done(14, "Pipeline complete — ready for IR export");
 
         Ok(state.composition)
+    }
+
+    fn report_stage_start(&self, stage_index: u8, message: impl Into<String>) {
+        let name = STAGE_NAMES[usize::from(stage_index.saturating_sub(1))];
+        report(
+            &self.progress.as_ref(),
+            name,
+            stage_index,
+            TOTAL_STAGES,
+            0.0,
+            message,
+        );
+    }
+
+    fn report_stage_done(&self, stage_index: u8, message: impl Into<String>) {
+        let name = STAGE_NAMES[usize::from(stage_index.saturating_sub(1))];
+        report(
+            &self.progress.as_ref(),
+            name,
+            stage_index,
+            TOTAL_STAGES,
+            1.0,
+            message,
+        );
     }
 }
 
@@ -342,7 +292,8 @@ fn empty_composition() -> Composition {
 }
 
 /// Public entry point: generate a complete composition through all 14 stages.
-pub fn generate_composition(params: ParameterBundle) -> Result<Composition, EngineError> {
+pub fn generate_composition(mut params: ParameterBundle) -> Result<Composition, EngineError> {
+    aurora_core::sanitize_generation_bundle(&mut params);
     PipelineOrchestrator::new().run(&params)
 }
 
@@ -374,7 +325,10 @@ mod tests {
         assert!(voices.contains(&VoiceRole::Drums));
 
         let melody_notes = count_voice_notes(&comp, 0);
-        assert_eq!(melody_notes, 64);
+        assert!(
+            melody_notes >= 64,
+            "melody should fill at least one note per quarter beat, got {melody_notes}"
+        );
 
         let drums_channel = comp
             .voice_registry

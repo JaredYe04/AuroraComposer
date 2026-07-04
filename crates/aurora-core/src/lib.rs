@@ -10,14 +10,18 @@ mod config;
 mod error;
 mod ids;
 mod params;
+mod progression;
 mod summary;
 
 pub use config::SearchConfig;
 pub use error::AuroraError;
 pub use ids::{JobId, NodeId};
 pub use params::{
-    CadenceParams, CounterpointParams, DrumsParams, DynamicsParams, EmotionParams, FormParams,
-    HarmonyParams, ModeParams, ParameterBundle, RegisterParams, RhythmParams, ScaleParams,
-    SearchParams, StyleParams, TextureParams, ThemeParams, VoiceParams,
+    derived_chord_tone_bias, derived_neighbor_tone_bias, derived_passing_tone_bias,
+    sanitize_generation_bundle, AccompanimentParams, CadenceParams, CounterpointParams, DrumsParams, DynamicsParams,
+    EmotionParams, FormParams, HarmonyParams, MelodyParams, ModeParams, ParameterBundle,
+    RegisterParams, RhythmParams, ScaleParams, SearchParams, StyleParams, TextureParams,
+    ThemeParams, VoiceParams,
 };
+pub use progression::ProgressionMode;
 pub use summary::{CompositionSummary, ExportError, UiParameterSnapshot};

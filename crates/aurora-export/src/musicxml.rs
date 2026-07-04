@@ -1,4 +1,4 @@
-use aurora_ast::Composition;
+use aurora_ast::{Clef, Composition};
 use aurora_core::ExportError;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event as XmlEvent};
 use quick_xml::Writer;
@@ -26,8 +26,14 @@ pub struct MusicXmlExportConfig {
 
 impl Default for MusicXmlExportConfig {
     fn default() -> Self {
+        Self::full_score()
+    }
+}
+
+impl MusicXmlExportConfig {
+    pub fn full_score() -> Self {
         Self {
-            profile: MusicXmlProfile::Interchange,
+            profile: MusicXmlProfile::Full,
             divisions_per_quarter: 480,
             include_provenance: true,
             pretty_print: false,
@@ -233,17 +239,25 @@ fn write_part(
             .map_err(xml_err)?;
 
         if m == 0 {
-            write_measure_attributes(writer, comp, config, ir)?;
+            write_measure_attributes(writer, comp, config, ir, view)?;
         }
 
         let measure_start = m * measure_ticks;
         let measure_end = measure_start + measure_ticks;
 
         for &idx in &view.event_indices {
-            if let IrEvent::Note(note) = &ir.events[idx] {
-                if note.base.tick >= measure_start && note.base.tick < measure_end {
-                    write_note(writer, note, config, comp)?;
+            match &ir.events[idx] {
+                IrEvent::Note(note)
+                    if note.base.tick >= measure_start && note.base.tick < measure_end =>
+                {
+                    write_note(writer, note, config, comp, view)?;
                 }
+                IrEvent::Rest(rest)
+                    if rest.base.tick >= measure_start && rest.base.tick < measure_end =>
+                {
+                    write_rest(writer, rest, config)?;
+                }
+                _ => {}
             }
         }
 
@@ -263,6 +277,7 @@ fn write_measure_attributes(
     comp: &Composition,
     config: &MusicXmlExportConfig,
     ir: &MusicIr,
+    view: &crate::ir::ChannelView,
 ) -> Result<(), ExportError> {
     writer
         .write_event(XmlEvent::Start(BytesStart::new("attributes")))
@@ -276,17 +291,14 @@ fn write_measure_attributes(
     writer
         .write_event(XmlEvent::Start(BytesStart::new("key")))
         .map_err(xml_err)?;
-    let mode = match comp.global.key_map.default.mode {
-        aurora_ast::nodes::Mode::Major => "major",
-        aurora_ast::nodes::Mode::NaturalMinor
-        | aurora_ast::nodes::Mode::HarmonicMinor
-        | aurora_ast::nodes::Mode::MelodicMinor => "minor",
-        _ => "major",
-    };
+    let key_ev = ir.timeline.key_events.first();
+    let mode = key_ev
+        .map(|k| k.mode.as_str())
+        .unwrap_or("major");
     write_text_el(
         writer,
         "fifths",
-        &ir.timeline.key_events.first().map(|k| k.fifths.to_string()).unwrap_or_else(|| "0".into()),
+        &key_ev.map(|k| k.fifths.to_string()).unwrap_or_else(|| "0".into()),
     )?;
     write_text_el(writer, "mode", mode)?;
     writer
@@ -310,17 +322,80 @@ fn write_measure_attributes(
         .write_event(XmlEvent::End(BytesEnd::new("time")))
         .map_err(xml_err)?;
 
-    writer
-        .write_event(XmlEvent::Start(BytesStart::new("clef")))
-        .map_err(xml_err)?;
-    write_text_el(writer, "sign", "G")?;
-    write_text_el(writer, "line", "2")?;
-    writer
-        .write_event(XmlEvent::End(BytesEnd::new("clef")))
-        .map_err(xml_err)?;
+    write_clef(writer, comp, view)?;
 
     writer
         .write_event(XmlEvent::End(BytesEnd::new("attributes")))
+        .map_err(xml_err)?;
+    Ok(())
+}
+
+fn write_clef(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    comp: &Composition,
+    view: &crate::ir::ChannelView,
+) -> Result<(), ExportError> {
+    let clef = comp
+        .voice_registry
+        .voices
+        .iter()
+        .find(|v| v.id == view.voice_id)
+        .map(|v| v.instrument.clef)
+        .unwrap_or(if view.is_drum {
+            Clef::Percussion
+        } else {
+            Clef::Treble
+        });
+
+    writer
+        .write_event(XmlEvent::Start(BytesStart::new("clef")))
+        .map_err(xml_err)?;
+    match clef {
+        Clef::Bass => {
+            write_text_el(writer, "sign", "F")?;
+            write_text_el(writer, "line", "4")?;
+        }
+        Clef::Percussion | Clef::Tab if view.is_drum => {
+            write_text_el(writer, "sign", "percussion")?;
+        }
+        Clef::Alto => {
+            write_text_el(writer, "sign", "C")?;
+            write_text_el(writer, "line", "3")?;
+        }
+        Clef::Tenor => {
+            write_text_el(writer, "sign", "C")?;
+            write_text_el(writer, "line", "4")?;
+        }
+        _ => {
+            write_text_el(writer, "sign", "G")?;
+            write_text_el(writer, "line", "2")?;
+        }
+    }
+    writer
+        .write_event(XmlEvent::End(BytesEnd::new("clef")))
+        .map_err(xml_err)?;
+    Ok(())
+}
+
+fn write_rest(
+    writer: &mut Writer<Cursor<Vec<u8>>>,
+    rest: &crate::ir::IrRest,
+    config: &MusicXmlExportConfig,
+) -> Result<(), ExportError> {
+    writer
+        .write_event(XmlEvent::Start(BytesStart::new("note")))
+        .map_err(xml_err)?;
+    writer
+        .write_event(XmlEvent::Empty(BytesStart::new("rest")))
+        .map_err(xml_err)?;
+    write_text_el(writer, "duration", &rest.duration_ticks.to_string())?;
+    write_text_el(
+        writer,
+        "type",
+        duration_to_type(rest.duration_ticks, config.divisions_per_quarter),
+    )?;
+    writer
+        .write_event(XmlEvent::End(BytesEnd::new("note")))
         .map_err(xml_err)?;
     Ok(())
 }
@@ -330,8 +405,8 @@ fn write_note(
     note: &crate::ir::IrNote,
     config: &MusicXmlExportConfig,
     comp: &Composition,
+    view: &crate::ir::ChannelView,
 ) -> Result<(), ExportError> {
-    let pitch = note_to_spelling(note.midi);
     let duration = note.duration_ticks;
 
     let mut note_el = BytesStart::new("note");
@@ -345,18 +420,31 @@ fn write_note(
     }
     writer.write_event(XmlEvent::Start(note_el)).map_err(xml_err)?;
 
-    writer
-        .write_event(XmlEvent::Start(BytesStart::new("pitch")))
-        .map_err(xml_err)?;
-    let step = pitch.0;
-    write_text_el(writer, "step", step)?;
-    if pitch.1 != 0 {
-        write_text_el(writer, "alter", &pitch.1.to_string())?;
+    if view.is_drum || note.is_drum {
+        writer
+            .write_event(XmlEvent::Start(BytesStart::new("unpitched")))
+            .map_err(xml_err)?;
+        let (step, octave) = drum_display(note.midi);
+        write_text_el(writer, "display-step", step)?;
+        write_text_el(writer, "display-octave", &octave.to_string())?;
+        writer
+            .write_event(XmlEvent::End(BytesEnd::new("unpitched")))
+            .map_err(xml_err)?;
+    } else {
+        let pitch = note_to_spelling(note.midi);
+        writer
+            .write_event(XmlEvent::Start(BytesStart::new("pitch")))
+            .map_err(xml_err)?;
+        let step = pitch.0;
+        write_text_el(writer, "step", step)?;
+        if pitch.1 != 0 {
+            write_text_el(writer, "alter", &pitch.1.to_string())?;
+        }
+        write_text_el(writer, "octave", &pitch.2.to_string())?;
+        writer
+            .write_event(XmlEvent::End(BytesEnd::new("pitch")))
+            .map_err(xml_err)?;
     }
-    write_text_el(writer, "octave", &pitch.2.to_string())?;
-    writer
-        .write_event(XmlEvent::End(BytesEnd::new("pitch")))
-        .map_err(xml_err)?;
 
     write_text_el(writer, "duration", &duration.to_string())?;
     write_text_el(writer, "type", duration_to_type(duration, config.divisions_per_quarter))?;
@@ -377,6 +465,22 @@ fn write_note(
         .write_event(XmlEvent::End(BytesEnd::new("note")))
         .map_err(xml_err)?;
     Ok(())
+}
+
+/// GM percussion display position for MusicXML unpitched elements.
+fn drum_display(midi: u8) -> (&'static str, i8) {
+    match midi {
+        35 | 36 => ("F", 4),  // kick
+        38 | 40 => ("C", 5),  // snare
+        42 | 44 => ("G", 5),  // hihat
+        46 => ("A", 5),       // open hihat
+        49 => ("C", 6),       // crash
+        51 => ("D", 6),       // ride
+        41 | 43 => ("F", 3),  // tom low
+        45 | 47 => ("A", 4),  // tom mid
+        48 | 50 => ("C", 5),  // tom high
+        _ => ("B", 4),
+    }
 }
 
 fn duration_to_type(duration: u32, divisions: u32) -> &'static str {

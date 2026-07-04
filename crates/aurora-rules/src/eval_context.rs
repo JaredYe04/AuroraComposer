@@ -131,6 +131,20 @@ pub struct AstSnapshot {
     pub bass_register: (u8, u8),
     pub chord_grid: Option<Vec<ChordSymbol>>,
     pub beats_per_measure: u8,
+    /// Beats per phrase (for contour / return-home scoring).
+    pub phrase_length_beats: usize,
+    /// Total melody steps in the piece.
+    pub total_melody_steps: usize,
+    /// Target step index for melodic climax (arch contour).
+    pub climax_step: usize,
+    /// True when the candidate being evaluated is the final melody step of the piece.
+    pub is_piece_end_step: bool,
+    /// True when within the closing window before piece or phrase end.
+    pub in_closure_zone: bool,
+    /// Precomputed expected motif pitch per melody step (None = outside motif region).
+    pub motif_expected_by_step: Option<Vec<Option<u8>>>,
+    /// Expected motif pitch at the current evaluation step (from motif plan).
+    pub motif_expected_pitch: Option<u8>,
 }
 
 impl Default for AstSnapshot {
@@ -154,6 +168,13 @@ impl Default for AstSnapshot {
             bass_register: (36, 60),
             chord_grid: None,
             beats_per_measure: 4,
+            phrase_length_beats: 16,
+            total_melody_steps: 64,
+            climax_step: 42,
+            is_piece_end_step: false,
+            in_closure_zone: false,
+            motif_expected_by_step: None,
+            motif_expected_pitch: None,
         }
     }
 }
@@ -181,18 +202,51 @@ impl AstSnapshot {
     }
 
     #[must_use]
+    pub fn with_motif_plan(mut self, expected: Vec<Option<u8>>) -> Self {
+        self.motif_expected_by_step = Some(expected);
+        self
+    }
+
+    #[must_use]
     pub fn for_step(&self, step: u32) -> Self {
         let mut next = self.clone();
+        let step_usize = step as usize;
+        let beats = usize::from(self.beats_per_measure.max(1));
+        let plen = self.phrase_length_beats.max(beats);
+        let total = self.total_melody_steps.max(1);
+        let closure_beats = 4usize.min(plen / 2).max(2);
+
         if let Some(grid) = &self.chord_grid {
-            let beats = usize::from(self.beats_per_measure.max(1));
-            let measure_idx = step as usize / beats;
-            next.current_chord = grid.get(measure_idx).cloned();
-            let beat = step as usize % beats;
+            let per_beat = grid.len() > beats;
+            let chord_idx = if per_beat {
+                step_usize
+            } else {
+                step_usize / beats
+            };
+            next.current_chord = grid.get(chord_idx).cloned();
+            let beat = step_usize % beats;
             next.beat_strength = BeatStrength(if beat == 0 || beat == 2 {
                 BeatStrengthKind::Strong
             } else {
                 BeatStrengthKind::Weak
             });
+        }
+
+        let next_step = step_usize + 1;
+        next.phrase_end = next_step % plen == 0 || next_step >= total;
+        let pos_in_phrase = step_usize % plen;
+        let near_phrase_end = pos_in_phrase + closure_beats.min(2) >= plen;
+        next.is_phrase_end_measure =
+            next_step % beats == 0 && (next.phrase_end || near_phrase_end);
+        next.is_piece_end_step = next_step >= total;
+        next.in_closure_zone = next_step + closure_beats > total
+            || near_phrase_end
+            || next.is_piece_end_step;
+        if next.phrase_end || next.is_piece_end_step {
+            next.cadence = CadenceType::PerfectAuthentic;
+        }
+        if let Some(grid) = &self.motif_expected_by_step {
+            next.motif_expected_pitch = grid.get(step_usize).and_then(|x| *x);
         }
         next
     }
@@ -211,10 +265,21 @@ impl AstSnapshot {
             }
         }
         if let Some(grid) = &self.chord_grid {
-            let step = next.melody_pitches.len();
-            let measure_idx = step / usize::from(self.beats_per_measure.max(1));
-            next.current_chord = grid.get(measure_idx).cloned();
-            let beat = step % usize::from(self.beats_per_measure.max(1));
+            let beats = usize::from(self.beats_per_measure.max(1));
+            let per_beat = grid.len() > beats;
+            let step = match patch.voice_id.0 {
+                0 => next.melody_pitches.len(),
+                1 => next.alto_pitches.len(),
+                2 => next.bass_pitches.len(),
+                _ => next.melody_pitches.len(),
+            };
+            let chord_idx = if per_beat {
+                step.saturating_sub(1)
+            } else {
+                step.saturating_sub(1) / beats
+            };
+            next.current_chord = grid.get(chord_idx).cloned();
+            let beat = (step.saturating_sub(1)) % beats;
             next.beat_strength = BeatStrength(if beat == 0 || beat == 2 {
                 BeatStrengthKind::Strong
             } else {
@@ -293,11 +358,16 @@ pub trait RuleWeightMapping {
     fn repetition_ratio(&self) -> f64;
     fn syncopation(&self) -> f64;
     fn dissonance_tolerance(&self) -> f64;
+    fn tonal_conservatism(&self) -> f64;
+    fn nct_penalty_weight(&self) -> f64;
+    fn contour_balance_weight(&self) -> f64;
 }
 
 impl RuleWeightMapping for ParameterBundle {
     fn chord_tone_weight(&self) -> f64 {
-        lerp(0.0, 50.0, self.harmony.complexity as f64)
+        let t = self.melody.tonal_conservatism as f64;
+        let melody_bias = self.melody.chord_tone_bias as f64;
+        lerp(0.0, 50.0, t * 0.55 + melody_bias * 0.35 + self.harmony.complexity as f64 * 0.10)
     }
 
     fn cadence_strength_weight(&self) -> f64 {
@@ -313,7 +383,7 @@ impl RuleWeightMapping for ParameterBundle {
     }
 
     fn leap_limit_semitones(&self) -> u8 {
-        7
+        self.melody.leap_limit_semitones.max(4)
     }
 
     fn parallel_penalty(&self) -> f64 {
@@ -342,6 +412,18 @@ impl RuleWeightMapping for ParameterBundle {
 
     fn dissonance_tolerance(&self) -> f64 {
         self.harmony.dissonance as f64
+    }
+
+    fn tonal_conservatism(&self) -> f64 {
+        self.melody.tonal_conservatism as f64
+    }
+
+    fn nct_penalty_weight(&self) -> f64 {
+        lerp(5.0, 35.0, self.melody.tonal_conservatism as f64)
+    }
+
+    fn contour_balance_weight(&self) -> f64 {
+        lerp(8.0, 28.0, self.melody.tonal_conservatism as f64 * 0.5 + self.theme.repetition_ratio as f64 * 0.5)
     }
 }
 

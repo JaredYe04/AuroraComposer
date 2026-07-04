@@ -124,35 +124,7 @@ fn build_smf(ir: &MusicIr, config: &MidiExportConfig) -> Result<Smf<'static>, Ex
             });
         }
 
-        let mut current_tick = 0u64;
-        for &idx in &view.event_indices {
-            if let IrEvent::Note(note) = &ir.events[idx] {
-                let delta_on = note.base.tick.saturating_sub(current_tick);
-                track.push(TrackEvent {
-                    delta: u32::try_from(delta_on)
-                        .map_err(|_| ExportError::Midi("tick overflow".into()))?
-                        .into(),
-                    kind: TrackEventKind::Midi {
-                        channel: channel.into(),
-                        message: MidiMessage::NoteOn {
-                            key: note.midi.into(),
-                            vel: note.velocity.into(),
-                        },
-                    },
-                });
-                track.push(TrackEvent {
-                    delta: note.duration_ticks.into(),
-                    kind: TrackEventKind::Midi {
-                        channel: channel.into(),
-                        message: MidiMessage::NoteOff {
-                            key: note.midi.into(),
-                            vel: 0.into(),
-                        },
-                    },
-                });
-                current_tick = note.end_tick;
-            }
-        }
+        append_note_events(&mut track, ir, view, channel)?;
 
         track.push(TrackEvent {
             delta: 0.into(),
@@ -168,6 +140,84 @@ fn build_smf(ir: &MusicIr, config: &MidiExportConfig) -> Result<Smf<'static>, Ex
         },
         tracks,
     })
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TimedMidiKind {
+    NoteOn,
+    NoteOff,
+}
+
+#[derive(Clone, Copy)]
+struct TimedMidiEvent {
+    tick: u64,
+    kind: TimedMidiKind,
+    key: u8,
+    velocity: u8,
+}
+
+/// Emit note events sorted by absolute tick so simultaneous hits (e.g. kick + hi-hat)
+/// share the same onset time instead of being serialized with spurious delay.
+fn append_note_events(
+    track: &mut Vec<TrackEvent<'static>>,
+    ir: &MusicIr,
+    view: &crate::ir::ChannelView,
+    channel: u8,
+) -> Result<(), ExportError> {
+    let mut timed = Vec::new();
+    for &idx in &view.event_indices {
+        if let IrEvent::Note(note) = &ir.events[idx] {
+            timed.push(TimedMidiEvent {
+                tick: note.base.tick,
+                kind: TimedMidiKind::NoteOn,
+                key: note.midi,
+                velocity: note.velocity,
+            });
+            timed.push(TimedMidiEvent {
+                tick: note.end_tick,
+                kind: TimedMidiKind::NoteOff,
+                key: note.midi,
+                velocity: 0,
+            });
+        }
+    }
+
+    timed.sort_by(|a, b| {
+        a.tick
+            .cmp(&b.tick)
+            .then_with(|| match (a.kind, b.kind) {
+                (TimedMidiKind::NoteOn, TimedMidiKind::NoteOff) => std::cmp::Ordering::Less,
+                (TimedMidiKind::NoteOff, TimedMidiKind::NoteOn) => std::cmp::Ordering::Greater,
+                _ => a.key.cmp(&b.key),
+            })
+    });
+
+    let mut current_tick = 0u64;
+    for ev in timed {
+        let delta = ev.tick.saturating_sub(current_tick);
+        let message = match ev.kind {
+            TimedMidiKind::NoteOn => MidiMessage::NoteOn {
+                key: ev.key.into(),
+                vel: ev.velocity.into(),
+            },
+            TimedMidiKind::NoteOff => MidiMessage::NoteOff {
+                key: ev.key.into(),
+                vel: ev.velocity.into(),
+            },
+        };
+        track.push(TrackEvent {
+            delta: u32::try_from(delta)
+                .map_err(|_| ExportError::Midi("tick overflow".into()))?
+                .into(),
+            kind: TrackEventKind::Midi {
+                channel: channel.into(),
+                message,
+            },
+        });
+        current_tick = ev.tick;
+    }
+
+    Ok(())
 }
 
 fn leak_bytes(s: &str) -> &'static [u8] {

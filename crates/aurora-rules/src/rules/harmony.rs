@@ -11,6 +11,8 @@ pub fn hard_rules() -> Vec<HardRule> {
     rules.push(harm_026_hard());
     rules.push(stub_hard("HARM-027", "HARM-027", RuleCategory::Harmony));
     rules.push(harm_041_hard());
+    rules.push(harm_mel_002_hard());
+    rules.push(harm_mel_003_hard());
     rules.push(harm_050_hard());
     rules.push(stub_hard("HARM-066", "HARM-066", RuleCategory::Harmony));
     rules.push(harm_cad_007_hard());
@@ -22,6 +24,7 @@ pub fn hard_rules() -> Vec<HardRule> {
 pub fn soft_rules() -> Vec<SoftRule> {
     let mut rules = Vec::new();
     rules.push(harm_001_soft());
+    rules.push(harm_mel_001_soft());
     rules.push(harm_003_soft());
     rules.push(harm_015_soft());
     rules.push(stub_soft("HARM-004", "HARM-004", RuleCategory::Harmony));

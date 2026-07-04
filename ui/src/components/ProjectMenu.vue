@@ -17,9 +17,9 @@ async function onNew() {
   busy.value = true;
   message.value = null;
   try {
-    await newProject();
-    compStore.clearAfterNew();
+    const summary = await newProject();
     await paramStore.load();
+    await compStore.resetWorkspace(summary);
   } catch (e) {
     message.value = e instanceof Error ? e.message : String(e);
   } finally {
@@ -90,15 +90,15 @@ async function onLoad() {
 .project-menu button {
   padding: 0.3rem 0.65rem;
   font-size: 0.75rem;
-  border: 1px solid #30363d;
+  border: 1px solid var(--border-muted);
   border-radius: 4px;
-  background: #21262d;
+  background: var(--bg-panel-elevated);
   color: inherit;
   cursor: pointer;
 }
 
 .project-menu button:hover:not(:disabled) {
-  background: #30363d;
+  background: var(--border-subtle);
 }
 
 .project-menu button:disabled {
@@ -108,7 +108,7 @@ async function onLoad() {
 
 .message {
   font-size: 0.7rem;
-  color: #8b949e;
+  color: var(--text-muted);
   margin-left: 0.25rem;
 }
 </style>

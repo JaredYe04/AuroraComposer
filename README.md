@@ -9,10 +9,35 @@
 ## Quick Start
 
 ```bash
-cargo test --workspace          # 66 tests
+cargo test --workspace          # Rust tests
 cd ui && npm install && npm run build
 cd ../src-tauri && cargo run    # Launch desktop app
 ```
+
+Or on Windows:
+- **`dev.cmd`** — development with **frontend hot reload** (recommended while editing UI)
+- **`start.cmd`** — full production build, then launch (no HMR)
+
+```bash
+# Dev: hot reload for Vue/CSS (run from repo root — Tauri finds src-tauri/)
+cd ui && npm install && cd .. && ui/node_modules/.bin/tauri dev
+
+# Production run (rebuild UI each time)
+cd ui && npm run build && cd ../src-tauri && cargo run
+```
+
+### Keyboard shortcuts (piano roll)
+
+| Shortcut | Action |
+|----------|--------|
+| Space | Play / stop (playhead returns to start position) |
+| Ctrl+C / Ctrl+V | Copy / paste selected notes |
+| Ctrl+B | Duplicate selected notes to next measure |
+| Delete | Delete selected notes |
+
+Tools: **Pointer**, **Box select**, **Brush** (add note), **Eraser**.
+
+Playback uses **GM SoundFont** (FluidR3 via CDN on first play). Per-voice piano roll tabs filter Melody / Bass / Drums (drum map rows).
 
 ---
 
@@ -23,8 +48,9 @@ A **parameterized, explainable music composition engine**:
 - Generates multi-voice scores (melody, counterpoint, bass, drums)
 - Every note has **provenance** (rule ID, score, reason)
 - **401 music theory rules** with beam search
-- Export to **MIDI, MusicXML, ABC, SVG**
-- **Vue 3 UI**: timeline, piano roll, inspector, playback
+- Export to **MIDI, MusicXML, ABC, SVG, PDF**
+- **Full-score export**: multi-part MusicXML/ABC, correct clefs/key, drum unpitched notation
+- **Vue 3 UI**: timeline, per-voice piano roll, inspector, GM SoundFont playback
 
 ---
 

@@ -4,6 +4,8 @@ use aurora_core::ParameterBundle;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use aurora_ast::Event;
+
 use crate::eval_context::{AstSnapshot, CandidatePatch, EvaluationContext};
 use aurora_ast::VoiceRole;
 use crate::constraint::ConstraintEvaluator;
@@ -147,6 +149,23 @@ impl std::fmt::Display for SearchExhausted {
 
 impl std::error::Error for SearchExhausted {}
 
+fn patch_tie_key(seed: u64, step: u32, patch: Option<&CandidatePatch>) -> u64 {
+    let midi = patch
+        .and_then(|p| {
+            p.nodes_to_add.iter().find_map(|e| {
+                if let Event::Note(n) = e {
+                    Some(u64::from(n.pitch.midi))
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or(0);
+    seed.wrapping_mul(0x517C_C1B7_2722_0A95)
+        .wrapping_add(u64::from(step).wrapping_mul(131))
+        .wrapping_add(midi.wrapping_mul(17))
+}
+
 pub trait TerminalCondition {
     fn is_terminal(&self, state: &SearchState) -> bool;
 }
@@ -163,6 +182,11 @@ impl TerminalCondition for StepCountTerminal {
 
 pub trait CandidateGenerator {
     fn generate(&self, state: &SearchState) -> Vec<CandidatePatch>;
+
+    /// Voice role used for rule evaluation (melody vs bass vs inner voices).
+    fn voice_role(&self) -> VoiceRole {
+        VoiceRole::Melody
+    }
 }
 
 /// Beam search engine per ADR-003 and scoring.md Appendix A.
@@ -237,10 +261,11 @@ impl BeamSearchEngine {
                         .clone()
                         .with_registers_from(self.constraints.params())
                         .for_step(state.step_index);
+                    let voice_role = generator.voice_role();
                     let ctx = EvaluationContext {
                         snapshot: &trial_snapshot,
                         patch: &patch,
-                        voice_role: VoiceRole::Melody,
+                        voice_role,
                         step_index: state.step_index,
                     };
 
@@ -265,11 +290,21 @@ impl BeamSearchEngine {
                 return Err(SearchExhausted { trace });
             }
 
+            let seed = self
+                .constraints
+                .params()
+                .search
+                .seed
+                .unwrap_or(42);
+
             candidates.sort_by(|a, b| {
                 b.eval_score
                     .partial_cmp(&a.eval_score)
                     .unwrap_or(Ordering::Equal)
-                    .then_with(|| a.id.cmp(&b.id))
+                    .then_with(|| {
+                        patch_tie_key(seed, step, b.last_patch.as_ref())
+                            .cmp(&patch_tie_key(seed, step, a.last_patch.as_ref()))
+                    })
             });
 
             let width = self.config.beam_width.max(1);

@@ -22,9 +22,15 @@ pub struct AbcExportConfig {
 
 impl Default for AbcExportConfig {
     fn default() -> Self {
+        Self::full_score()
+    }
+}
+
+impl AbcExportConfig {
+    pub fn full_score() -> Self {
         Self {
-            mode: AbcExportMode::LeadSheet,
-            max_voices: 1,
+            mode: AbcExportMode::Full,
+            max_voices: 4,
             include_chord_symbols: true,
             tune_number: 1,
             aurora_comments: true,

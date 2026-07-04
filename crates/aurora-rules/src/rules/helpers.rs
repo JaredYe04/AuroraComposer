@@ -2,6 +2,8 @@
 
 use aurora_ast::{ChordQuality, ChordSymbol, KeySignature, Mode, VoiceRole};
 
+use crate::scale::mode_scale_pcs;
+
 use crate::eval_context::{EvaluationContext, PitchExt};
 use crate::rule::{
     EvalCost, HardRule, Rule, RuleCategory, RuleId, RuleMode, RuleScope, SoftEvalOutcome, SoftRule,
@@ -320,8 +322,18 @@ pub fn on_grid(beat: f64, subdivision: u8) -> bool {
 }
 
 pub fn is_diatonic_in_key(chord: &ChordSymbol, key: &KeySignature) -> bool {
-    let scale = major_scale(key.tonic.pc);
-    scale.contains(&chord.root.pc)
+    mode_scale_pcs(key).contains(&chord.root.pc)
+}
+
+pub fn primary_dominant_pc(key: &KeySignature) -> u8 {
+    (key.tonic.pc + 7) % 12
+}
+
+pub fn is_primary_dominant_chord(chord: &ChordSymbol, key: &KeySignature) -> bool {
+    matches!(
+        chord.quality,
+        ChordQuality::Major | ChordQuality::Dominant7 | ChordQuality::Major7
+    ) && chord.root.pc == primary_dominant_pc(key)
 }
 
 pub fn major_scale(tonic: u8) -> Vec<u8> {
@@ -351,17 +363,339 @@ pub fn parallel_perfect(ctx: &EvaluationContext<'_>, interval: i16) -> bool {
 }
 
 pub fn motif_similarity(ctx: &EvaluationContext<'_>) -> f64 {
+    if let Some(expected) = ctx.snapshot.motif_expected_pitch {
+        if let Some(curr) = ctx.candidate_pitch() {
+            let diff = (curr.midi as i16 - expected as i16).unsigned_abs();
+            return match diff {
+                0 => 1.0,
+                1 | 2 => 0.82,
+                3 | 4 => 0.45,
+                _ => 0.12,
+            };
+        }
+    }
+
     let pitches: Vec<u8> = ctx.snapshot.melody_pitches.iter().map(|p| p.midi).collect();
     if pitches.len() < 2 {
         return 0.0;
     }
-    let mut matches = 0usize;
+
+    // Penalize exact pitch repetition (monotony)
+    let mut repeat_streak = 0usize;
     for w in pitches.windows(2) {
         if w[0] == w[1] {
+            repeat_streak += 1;
+        }
+    }
+    let repeat_penalty = if repeat_streak >= 2 {
+        0.75
+    } else if repeat_streak >= 1 {
+        0.45
+    } else {
+        0.0
+    };
+
+    // Penalize long monotonic runs (endless scale-walk)
+    let max_monotonic_run = max_same_direction_run(&pitches);
+    let monotonic_penalty = match max_monotonic_run {
+        n if n >= 6 => 0.65,
+        n if n >= 5 => 0.45,
+        n if n >= 4 => 0.25,
+        _ => 0.0,
+    };
+
+    // Penalize cumulative drift from phrase anchor without return
+    let drift_penalty = phrase_drift_penalty(&pitches, 16);
+
+    // Interval-pattern similarity: compare consecutive semitone deltas
+    let melody_intervals: Vec<i8> = pitches
+        .windows(2)
+        .map(|w| (w[1] as i16 - w[0] as i16).clamp(-12, 12) as i8)
+        .collect();
+
+    // Look for repeating interval patterns (motivic recall)
+    let pattern_len = 3.min(melody_intervals.len());
+    if pattern_len == 0 {
+        return 0.0;
+    }
+
+    let seed = &melody_intervals[..pattern_len];
+    let mut matches = 0usize;
+    let mut comparisons = 0usize;
+    for window in melody_intervals.windows(pattern_len).skip(1) {
+        comparisons += 1;
+        let same_intervals = window
+            .iter()
+            .zip(seed.iter())
+            .filter(|(a, b)| a == b)
+            .count();
+        let same_direction = window
+            .iter()
+            .zip(seed.iter())
+            .filter(|(a, b)| a.signum() == b.signum())
+            .count();
+        if same_intervals == pattern_len {
+            matches += 1;
+        } else if same_direction >= pattern_len - 1 {
             matches += 1;
         }
     }
-    matches as f64 / (pitches.len() - 1) as f64
+
+    if comparisons == 0 {
+        // Fallback: stepwise coherence
+        let stepwise = melody_intervals.iter().filter(|&&i| i.abs() <= 2).count();
+        (stepwise as f64 / melody_intervals.len() as f64 - repeat_penalty - monotonic_penalty - drift_penalty).max(0.0)
+    } else {
+        (matches as f64 / comparisons as f64 - repeat_penalty - monotonic_penalty - drift_penalty).max(0.0)
+    }
+}
+
+fn max_same_direction_run(pitches: &[u8]) -> usize {
+    if pitches.len() < 2 {
+        return 0;
+    }
+    let mut max_run = 1usize;
+    let mut run = 1usize;
+    let mut last_sign = 0i8;
+    for w in pitches.windows(2) {
+        let d = w[1] as i16 - w[0] as i16;
+        let sign = d.signum() as i8;
+        if sign == 0 {
+            run = 1;
+            last_sign = 0;
+            continue;
+        }
+        if sign == last_sign {
+            run += 1;
+            max_run = max_run.max(run);
+        } else {
+            run = 1;
+            last_sign = sign;
+        }
+    }
+    max_run
+}
+
+fn phrase_drift_penalty(pitches: &[u8], phrase_len: usize) -> f64 {
+    if pitches.len() < phrase_len / 2 {
+        return 0.0;
+    }
+    let plen = phrase_len.max(4);
+    let pos = pitches.len() % plen;
+    let start = pitches.len().saturating_sub(pos);
+    let Some(&anchor) = pitches.get(start) else {
+        return 0.0;
+    };
+    let Some(&current) = pitches.last() else {
+        return 0.0;
+    };
+    let drift = (current as i16 - anchor as i16).unsigned_abs();
+    if pos > plen / 2 && drift > 7 {
+        0.35
+    } else if pos > plen / 3 && drift > 10 {
+        0.2
+    } else {
+        0.0
+    }
+}
+
+pub fn contour_balance_eval(ctx: &EvaluationContext<'_>) -> SoftEvalOutcome {
+    let pitches: Vec<u8> = ctx
+        .snapshot
+        .melody_pitches
+        .iter()
+        .map(|p| p.midi)
+        .collect();
+    let Some(curr) = ctx.candidate_pitch() else {
+        return SoftEvalOutcome {
+            indicator: 0.0,
+            is_penalty: false,
+            reason: "No candidate".into(),
+        };
+    };
+    let plen = ctx.snapshot.phrase_length_beats.max(4);
+    let pos_in_phrase = pitches.len() % plen;
+    let phrase_start = pitches.len().saturating_sub(pos_in_phrase);
+    let anchor = pitches.get(phrase_start).copied().unwrap_or(curr.midi);
+    let prev = ctx.prev_pitch().map(|p| p.midi);
+
+    let mut penalty = 0.0f64;
+    let mut reward = 0.0f64;
+
+    if let Some(prev_midi) = prev {
+        let interval = curr.midi as i16 - prev_midi as i16;
+        let sign = interval.signum();
+        if sign != 0 {
+            let mut run = 1usize;
+            for w in pitches.windows(2).rev() {
+                let s = (w[1] as i16 - w[0] as i16).signum();
+                if s == sign {
+                    run += 1;
+                } else {
+                    break;
+                }
+            }
+            if run >= 4 {
+                penalty += 0.75;
+            } else if run >= 3 {
+                penalty += 0.45;
+            }
+        }
+    }
+
+    let dist_anchor = (curr.midi as i16 - anchor as i16).unsigned_abs();
+    let on_chord = ctx
+        .snapshot
+        .current_chord
+        .as_ref()
+        .map(|ch| {
+            use crate::eval_context::PitchExt;
+            ch.pitch_classes().contains(&curr.pitch_class().pc)
+        })
+        .unwrap_or(true);
+    if on_chord {
+        if dist_anchor <= 2 {
+            reward += 0.55;
+        } else if dist_anchor <= 5 {
+            reward += 0.35;
+        } else if dist_anchor <= 8 {
+            reward += 0.15;
+        }
+    } else if dist_anchor <= 3 {
+        reward += 0.12;
+    }
+
+    if let Some(prev_midi) = prev {
+        let abs_iv = (curr.midi as i16 - prev_midi as i16).unsigned_abs();
+        if abs_iv <= 2 {
+            reward += 0.28;
+        } else if abs_iv >= 8 {
+            penalty += 0.22;
+        }
+    }
+
+    let step = ctx.step_index as usize;
+    let climax = ctx.snapshot.climax_step;
+    if step.abs_diff(climax) <= 2 {
+        if let Some(prev_midi) = prev {
+            if curr.midi > prev_midi && on_chord {
+                reward += 0.32;
+            }
+        }
+    }
+    let total = ctx.snapshot.total_melody_steps.max(1);
+    let climax_clamped = climax.min(total);
+    let progress = step as f64 / total as f64;
+    let climax_ratio = climax_clamped as f64 / total as f64;
+    if progress > climax_ratio {
+        if let Some(prev_midi) = prev {
+            if curr.midi < prev_midi {
+                reward += 0.35;
+            } else if (curr.midi as i16 - prev_midi as i16) > 2 {
+                penalty += 0.25;
+            }
+        }
+    }
+
+    if penalty > reward {
+        SoftEvalOutcome {
+            indicator: penalty.min(1.0),
+            is_penalty: true,
+            reason: "Monotonic / drift contour".into(),
+        }
+    } else {
+        SoftEvalOutcome {
+            indicator: reward.max(0.1),
+            is_penalty: false,
+            reason: "Balanced contour / return home".into(),
+        }
+    }
+}
+
+/// Rewards melodic closure on tonic at phrase/piece endings.
+pub fn melody_closure_eval(ctx: &EvaluationContext<'_>) -> SoftEvalOutcome {
+    let Some(curr) = ctx.candidate_pitch() else {
+        return SoftEvalOutcome {
+            indicator: 0.0,
+            is_penalty: false,
+            reason: "No candidate".into(),
+        };
+    };
+    let tonic = ctx.snapshot.key.tonic.pc;
+    let curr_pc = curr.midi % 12;
+    let leading = leading_tone_pc(&ctx.snapshot.key);
+    let on_tonic = curr_pc == tonic;
+    let prev_leading = ctx
+        .prev_pitch()
+        .is_some_and(|p| p.midi % 12 == leading);
+
+    if ctx.snapshot.is_piece_end_step {
+        if on_tonic {
+            return SoftEvalOutcome {
+                indicator: 1.0,
+                is_penalty: false,
+                reason: "Piece ends on tonic".into(),
+            };
+        }
+        return SoftEvalOutcome {
+            indicator: 0.85,
+            is_penalty: true,
+            reason: "Final note must resolve to tonic".into(),
+        };
+    }
+
+    if ctx.snapshot.phrase_end {
+        if on_tonic {
+            return SoftEvalOutcome {
+                indicator: 0.95,
+                is_penalty: false,
+                reason: "Phrase closes on tonic".into(),
+            };
+        }
+        if prev_leading && curr.midi == ctx.prev_pitch().unwrap().midi + 1 {
+            return SoftEvalOutcome {
+                indicator: 0.9,
+                is_penalty: false,
+                reason: "Leading tone resolves at phrase end".into(),
+            };
+        }
+        return SoftEvalOutcome {
+            indicator: 0.55,
+            is_penalty: true,
+            reason: "Phrase end prefers tonic resolution".into(),
+        };
+    }
+
+    if ctx.snapshot.in_closure_zone {
+        if on_tonic {
+            return SoftEvalOutcome {
+                indicator: 0.75,
+                is_penalty: false,
+                reason: "Closure zone tonic".into(),
+            };
+        }
+        if curr_pc == leading {
+            return SoftEvalOutcome {
+                indicator: 0.5,
+                is_penalty: false,
+                reason: "Approach tone before closure".into(),
+            };
+        }
+        let dist = (curr.midi as i16 - (60 + tonic as i16)).unsigned_abs();
+        if dist <= 4 {
+            return SoftEvalOutcome {
+                indicator: 0.35,
+                is_penalty: false,
+                reason: "Near tonic in closure zone".into(),
+            };
+        }
+    }
+
+    SoftEvalOutcome {
+        indicator: 0.0,
+        is_penalty: false,
+        reason: "N/A".into(),
+    }
 }
 
 pub fn register_check(ctx: &EvaluationContext<'_>, role: VoiceRole, min: u8, max: u8) -> bool {

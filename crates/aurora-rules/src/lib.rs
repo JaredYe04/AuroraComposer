@@ -8,8 +8,10 @@
 
 pub mod constraint;
 pub mod eval_context;
+pub mod melody_nct;
 pub mod rule;
 pub mod rules;
+pub mod scale;
 pub mod scoring;
 pub mod search;
 

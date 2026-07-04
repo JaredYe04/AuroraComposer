@@ -10,12 +10,46 @@ use aurora_core::NodeId;
 use super::PipelineState;
 
 pub fn counterpoint_enabled(state: &PipelineState) -> bool {
-    state.params.texture.homophony_polyphony_balance <= 0.85
+    !state.params.accompaniment.enabled
+        && state.params.texture.homophony_polyphony_balance <= 0.85
         && state.params.counterpoint.strictness > 0.1
 }
 
+pub fn accompaniment_enabled(state: &PipelineState) -> bool {
+    state.params.accompaniment.enabled && !harmony_pad_enabled(state)
+}
+
+pub fn harmony_pad_enabled(state: &PipelineState) -> bool {
+    state.params.texture.homophony_polyphony_balance > 0.85
+        && state.params.texture.harmony_pad_enabled
+}
+
+pub fn harmony_pad_voice_id() -> VoiceId {
+    VoiceId(1)
+}
+
+pub fn accompaniment_voice_id() -> VoiceId {
+    VoiceId(1)
+}
+
+/// GM program and display name for accompaniment instrument preset.
+pub fn resolve_accompaniment_instrument(genre: &str, preset: &str) -> (u8, &'static str) {
+    match preset.to_lowercase().as_str() {
+        "strings" => (48, "String Ensemble"),
+        "piano" => (0, "Acoustic Piano"),
+        _ => match genre.to_lowercase().as_str() {
+            "classical" | "film" | "orchestral" => (48, "String Ensemble"),
+            "jazz" | "lofi" => (4, "Electric Piano"),
+            _ => (0, "Acoustic Piano"),
+        },
+    }
+}
+
 pub fn bass_voice_id(state: &PipelineState) -> VoiceId {
-    if counterpoint_enabled(state) {
+    if counterpoint_enabled(state)
+        || harmony_pad_enabled(state)
+        || accompaniment_enabled(state)
+    {
         VoiceId(2)
     } else {
         VoiceId(1)
@@ -23,7 +57,10 @@ pub fn bass_voice_id(state: &PipelineState) -> VoiceId {
 }
 
 pub fn drums_voice_id(state: &PipelineState) -> VoiceId {
-    if counterpoint_enabled(state) {
+    if counterpoint_enabled(state)
+        || harmony_pad_enabled(state)
+        || accompaniment_enabled(state)
+    {
         VoiceId(3)
     } else {
         VoiceId(2)
@@ -160,17 +197,82 @@ pub fn push_note(measure: &mut Measure, voice_id: VoiceId, event: Event) {
 }
 
 pub fn collect_melody_pitches(state: &PipelineState) -> Vec<u8> {
-    let mut pitches = Vec::new();
+    let beats_per = usize::from(state.params.rhythm.time_signature_beats.max(1));
+    let bar_count = super::total_bars(&state.params);
+    let total = bar_count as usize * beats_per;
+    collect_melody_per_beat(state, total)
+        .into_iter()
+        .map(|m| m.unwrap_or(60))
+        .collect()
+}
+
+/// One melody pitch per beat (first attack in each beat slot).
+pub fn collect_melody_per_beat(state: &PipelineState, total_steps: usize) -> Vec<Option<u8>> {
+    let beats_per_measure = usize::from(state.params.rhythm.time_signature_beats.max(1));
+    let mut out = vec![None; total_steps];
+    let mut global_beat = 0usize;
+
     for measure in iter_measures(&state.composition) {
         if let Some(voice) = measure.voices.iter().find(|v| v.voice_id.0 == 0) {
-            for event in &voice.events {
-                if let Event::Note(n) = event {
-                    pitches.push(n.pitch.midi);
+            for beat in 0..beats_per_measure {
+                if global_beat >= total_steps {
+                    break;
                 }
+                let beat_start = beat as f64;
+                let beat_end = beat_start + 1.0;
+                let mut best: Option<(f64, u8)> = None;
+                for event in &voice.events {
+                    if let Event::Note(n) = event {
+                        let q = n.base.offset.numer as f64 / f64::from(n.base.offset.denom.max(1));
+                        if q >= beat_start && q < beat_end {
+                            let ord = q;
+                            if best.map(|(b, _)| ord < b).unwrap_or(true) {
+                                best = Some((ord, n.pitch.midi));
+                            }
+                        }
+                    }
+                }
+                out[global_beat] = best.map(|(_, m)| m);
+                global_beat += 1;
             }
+        } else {
+            global_beat += beats_per_measure;
         }
     }
-    pitches
+    out
+}
+
+/// Per-beat chord grid from pipeline state (P7) or fallback from measures.
+pub fn collect_per_beat_chord_grid(state: &PipelineState, total_steps: usize) -> Vec<aurora_ast::ChordSymbol> {
+    if state.per_beat_chord_grid.len() >= total_steps {
+        return state.per_beat_chord_grid[..total_steps].to_vec();
+    }
+    let beats = usize::from(state.params.rhythm.time_signature_beats.max(1));
+    let bar_count = total_steps.div_ceil(beats);
+    let mut grid = Vec::with_capacity(total_steps);
+    for measure in iter_measures(&state.composition) {
+        let slot = measure.harmony_slots.first();
+        let chord = slot.map(|s| s.symbol.clone()).unwrap_or_else(|| {
+            aurora_ast::ChordSymbol::simple(
+                state.params.mode.key % 12,
+                aurora_ast::ChordQuality::Major,
+                "I",
+            )
+        });
+        for _ in 0..beats {
+            grid.push(chord.clone());
+        }
+    }
+    while grid.len() < total_steps {
+        if let Some(last) = grid.last().cloned() {
+            grid.push(last);
+        } else {
+            break;
+        }
+    }
+    grid.truncate(total_steps);
+    let _ = bar_count;
+    grid
 }
 
 pub fn cadence_chord_root(tonic: u8, cadence: CadenceType) -> u8 {

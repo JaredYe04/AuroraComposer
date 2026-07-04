@@ -1,10 +1,11 @@
 mod projection;
 mod state;
 
-use aurora_ast::{patch::patch_update_note_pitch, Composition, Event, Provenance, Project};
+use aurora_ast::{patch::{patch_delete_event, patch_insert_note, patch_update_note_pitch}, blank_workbench, Composition, Event, Provenance, Project};
 use aurora_ast::project::{
     PatchHistory, PluginConfig, ProjectManifest, PROJECT_FORMAT_VERSION,
 };
+use aurora_ast::{BeatOffset, VoiceId};
 use aurora_core::{CompositionSummary, NodeId, ParameterBundle, UiParameterSnapshot};
 use aurora_engine::{EngineError, PipelineOrchestrator};
 use aurora_export::{AbcExportConfig, ExportPipeline, MidiExportConfig, MusicXmlExportConfig};
@@ -22,6 +23,7 @@ struct JobProgressEvent {
     job_id: String,
     stage_name: String,
     stage_index: u8,
+    total_stages: u8,
     percent: f32,
     message: String,
 }
@@ -105,6 +107,7 @@ async fn generate_composition(
                             job_id: jid.clone(),
                             stage_name: p.stage_name,
                             stage_index: p.stage_index,
+                            total_stages: p.total_stages,
                             percent: p.percent,
                             message: p.message,
                         },
@@ -142,6 +145,24 @@ fn engine_err(err: EngineError) -> String {
             format!("Stage {stage} failed: {message}")
         }
     }
+}
+
+fn blank_from_params(params: &ParameterBundle) -> Composition {
+    let ui = UiParameterSnapshot::from(params);
+    blank_workbench(
+        "Untitled",
+        ui.bars.max(1),
+        ui.tempo_bpm,
+        ui.key,
+    )
+}
+
+fn set_blank_composition(state: &State<'_, AppState>) -> Result<CompositionSummary, String> {
+    let params = state.parameters.lock().map_err(|e| e.to_string())?.clone();
+    let blank = blank_from_params(&params);
+    let summary = composition_summary(&blank);
+    *state.composition.lock().map_err(|e| e.to_string())? = Some(blank);
+    Ok(summary)
 }
 
 fn require_composition(state: &State<'_, AppState>) -> Result<Composition, String> {
@@ -202,6 +223,50 @@ fn get_timeline(state: State<'_, AppState>) -> Result<Option<TimelineModel>, Str
 }
 
 #[tauri::command]
+fn delete_note(node_id: NodeId, state: State<'_, AppState>) -> Result<CompositionSummary, String> {
+    let mut comp_guard = state.composition.lock().map_err(|e| e.to_string())?;
+    let comp = comp_guard
+        .as_mut()
+        .ok_or_else(|| "No composition generated yet".to_string())?;
+    let updated = patch_delete_event(comp, node_id).map_err(|e| e.to_string())?;
+    *comp = updated;
+    Ok(composition_summary(comp))
+}
+
+#[derive(serde::Deserialize)]
+struct InsertNoteArgs {
+    measure_global: u32,
+    voice_id: u16,
+    beat_numer: u32,
+    beat_denom: u32,
+    midi: u8,
+    is_drum: bool,
+}
+
+#[tauri::command]
+fn insert_note(args: InsertNoteArgs, state: State<'_, AppState>) -> Result<CompositionSummary, String> {
+    let mut comp_guard = state.composition.lock().map_err(|e| e.to_string())?;
+    let comp = comp_guard
+        .as_mut()
+        .ok_or_else(|| "No composition generated yet".to_string())?;
+    let offset = BeatOffset {
+        numer: args.beat_numer,
+        denom: args.beat_denom,
+    };
+    let updated = patch_insert_note(
+        comp,
+        args.measure_global,
+        VoiceId(args.voice_id),
+        offset,
+        args.midi,
+        args.is_drum,
+    )
+    .map_err(|e| e.to_string())?;
+    *comp = updated;
+    Ok(composition_summary(comp))
+}
+
+#[tauri::command]
 fn apply_note_patch(
     node_id: NodeId,
     new_midi: u8,
@@ -258,16 +323,12 @@ fn load_project(path: String, state: State<'_, AppState>) -> Result<CompositionS
 }
 
 #[tauri::command]
-fn new_project(state: State<'_, AppState>) -> Result<(), String> {
-    {
-        let mut comp = state.composition.lock().map_err(|e| e.to_string())?;
-        *comp = None;
-    }
+fn new_project(state: State<'_, AppState>) -> Result<CompositionSummary, String> {
     {
         let mut params = state.parameters.lock().map_err(|e| e.to_string())?;
         *params = ParameterBundle::default();
     }
-    Ok(())
+    set_blank_composition(&state)
 }
 
 #[tauri::command]
@@ -319,6 +380,7 @@ fn get_provenance_chain(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             get_parameters,
@@ -334,6 +396,8 @@ pub fn run() {
             get_event_provenance,
             get_provenance_chain,
             apply_note_patch,
+            delete_note,
+            insert_note,
             save_project,
             load_project,
             new_project,

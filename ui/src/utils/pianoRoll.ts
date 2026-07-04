@@ -5,6 +5,7 @@ import type {
   Provenance,
   ProvenanceSource,
   RuleDefinition,
+  VoiceDef,
 } from '@/types/aurora';
 import {
   beatToFloat,
@@ -13,6 +14,29 @@ import {
   eventId,
   midiToName,
 } from '@/types/aurora';
+
+export interface DrumMapRow {
+  midi: number;
+  name: string;
+  shortName: string;
+}
+
+export const DRUM_MAP: DrumMapRow[] = [
+  { midi: 36, name: 'Bass Drum', shortName: 'BD' },
+  { midi: 38, name: 'Snare', shortName: 'SN' },
+  { midi: 42, name: 'Closed Hi-Hat', shortName: 'HH' },
+  { midi: 46, name: 'Open Hi-Hat', shortName: 'OH' },
+  { midi: 49, name: 'Crash', shortName: 'CR' },
+  { midi: 51, name: 'Ride', shortName: 'RD' },
+];
+
+export function isDrumVoice(voice: VoiceDef): boolean {
+  return /drum|percussion|kit/i.test(voice.name);
+}
+
+export function drumLabel(midi: number): string {
+  return DRUM_MAP.find((r) => r.midi === midi)?.shortName ?? String(midi);
+}
 
 function formatSummary(prov: Provenance, rules: RuleDefinition[]): string {
   const ruleLabel =
@@ -62,7 +86,7 @@ function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-export function extractPianoRollNotes(comp: Composition): PianoRollNote[] {
+export function extractPianoRollNotes(comp: Composition, voiceId?: number): PianoRollNote[] {
   const notes: PianoRollNote[] = [];
   const voiceMap = new Map(comp.voice_registry.voices.map((v) => [v.id, v.name]));
 
@@ -71,6 +95,7 @@ export function extractPianoRollNotes(comp: Composition): PianoRollNote[] {
       for (const phrase of section.phrases) {
         for (const measure of phrase.measures) {
           for (const mv of measure.voices) {
+            if (voiceId != null && mv.voice_id !== voiceId) continue;
             const voiceName = voiceMap.get(mv.voice_id) ?? `Voice ${mv.voice_id}`;
             for (const event of mv.events) {
               const note = eventToPianoRollNote(
@@ -113,6 +138,38 @@ function eventToPianoRollNote(
   };
 }
 
+export function drumMidiToRowIndex(midi: number): number {
+  const idx = DRUM_MAP.findIndex((r) => r.midi === midi);
+  if (idx >= 0) return idx;
+  // Unmapped percussion: one row per MIDI pitch (avoid collapsing to row 0).
+  return DRUM_MAP.length + (midi % 24);
+}
+
+export function drumRowCountForNotes(notes: PianoRollNote[]): number {
+  let maxRow = DRUM_MAP.length;
+  for (const n of notes) {
+    maxRow = Math.max(maxRow, drumMidiToRowIndex(n.pitchMidi) + 1);
+  }
+  return Math.max(DRUM_MAP.length, maxRow);
+}
+
+export function rowIndexToDrumMidi(rowIndex: number): number {
+  if (rowIndex >= 0 && rowIndex < DRUM_MAP.length) {
+    return DRUM_MAP[rowIndex]?.midi ?? 36;
+  }
+  return 36 + (rowIndex - DRUM_MAP.length);
+}
+
+export function drumRowToY(rowIndex: number, rowHeight: number): number {
+  return rowIndex * rowHeight;
+}
+
+export function yToDrumRowIndex(y: number, rowHeight: number, maxRows?: number): number {
+  const idx = Math.max(0, Math.round(y / rowHeight));
+  if (maxRows != null) return Math.min(maxRows - 1, idx);
+  return idx;
+}
+
 export function measureToX(measure: number, zoom: number, scrollX: number): number {
   return (measure - 1) * zoom - scrollX;
 }
@@ -151,11 +208,17 @@ export function noteWidth(note: PianoRollNote, beatsPerMeasure: number, zoom: nu
   return (note.durationBeats / beatsPerMeasure) * zoom;
 }
 
-export function pitchToY(midi: number, maxMidi: number, rowHeight: number): number {
+export function pitchToY(midi: number, _minMidi: number, maxMidi: number, rowHeight: number): number {
   return (maxMidi - midi) * rowHeight;
 }
 
-export function visiblePitchRange(notes: PianoRollNote[], padding = 4): [number, number] {
+const BLACK_KEY_PCS = new Set([1, 3, 6, 8, 10]);
+
+export function isBlackKey(midi: number): boolean {
+  return BLACK_KEY_PCS.has(midi % 12);
+}
+
+export function visiblePitchRange(notes: PianoRollNote[], paddingSemitones = 6): [number, number] {
   if (notes.length === 0) return [48, 84];
   let min = 127;
   let max = 0;
@@ -163,11 +226,21 @@ export function visiblePitchRange(notes: PianoRollNote[], padding = 4): [number,
     min = Math.min(min, n.pitchMidi);
     max = Math.max(max, n.pitchMidi);
   }
-  return [Math.max(0, min - padding), Math.min(127, max + padding)];
+  min -= paddingSemitones;
+  max += paddingSemitones;
+  const minOct = Math.floor(min / 12) * 12;
+  const maxOct = Math.min(127, Math.ceil((max + 1) / 12) * 12 - 1);
+  return [Math.max(0, minOct), Math.max(minOct, maxOct)];
 }
 
 export function pitchLabel(midi: number): string {
-  return midi % 12 === 0 ? midiToName(midi) : '';
+  return midiToName(midi);
+}
+
+export function drumRowLabel(midi: number): string {
+  const row = DRUM_MAP.find((r) => r.midi === midi);
+  if (row) return row.shortName;
+  return midiToName(midi);
 }
 
 export function totalMeasuresFromNotes(notes: PianoRollNote[], fallback = 8): number {

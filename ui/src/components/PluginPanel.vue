@@ -3,7 +3,13 @@ import { onMounted, ref } from 'vue';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listWasmPlugins, registerWasmPlugin } from '@/services/tauri';
 import type { PluginInfo } from '@/types/aurora';
+import { useI18n } from '@/composables/useI18n';
 
+defineProps<{
+  embedded?: boolean;
+}>();
+
+const { t } = useI18n();
 const plugins = ref<PluginInfo[]>([]);
 const loading = ref(false);
 const message = ref<string | null>(null);
@@ -32,7 +38,7 @@ async function onRegister() {
     });
     if (!path) return;
     await registerWasmPlugin(path);
-    message.value = 'Plugin registered.';
+    message.value = t('plugins.registered');
     await refresh();
   } catch (e) {
     message.value = e instanceof Error ? e.message : String(e);
@@ -47,20 +53,17 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="panel plugin-panel">
+  <section class="panel plugin-panel" :class="{ embedded }">
     <div class="header-row">
-      <h2>Plugins</h2>
+      <h2>{{ t('plugins.title') }}</h2>
       <button class="small-btn" :disabled="loading" @click="refresh">
-        {{ loading ? '…' : 'Refresh' }}
+        {{ loading ? '…' : t('plugins.refresh') }}
       </button>
     </div>
 
-    <p class="hint">
-      Built-in style plugins (classical, jazz, pop) and AI stub are always active. Register
-      external WASM plugins below.
-    </p>
+    <p class="hint">{{ t('plugins.hint') }}</p>
 
-    <button class="register-btn" @click="onRegister">Register WASM Plugin…</button>
+    <button class="register-btn" @click="onRegister">{{ t('plugins.register') }}</button>
 
     <ul v-if="plugins.length" class="plugin-list">
       <li v-for="plugin in plugins" :key="plugin.id" class="plugin-card">
@@ -69,13 +72,26 @@ onMounted(() => {
         <span class="plugin-state">{{ plugin.state }}</span>
       </li>
     </ul>
-    <p v-else class="empty">No external WASM plugins discovered.</p>
+    <p v-else class="empty">{{ t('plugins.empty') }}</p>
 
     <p v-if="message" class="message">{{ message }}</p>
   </section>
 </template>
 
 <style scoped>
+.plugin-panel {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+
+.plugin-panel.embedded {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .plugin-panel .header-row {
   display: flex;
   align-items: center;
@@ -88,22 +104,26 @@ onMounted(() => {
   font-size: 0.875rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #8b949e;
+  color: var(--text-muted);
 }
 
 .small-btn {
   padding: 0.2rem 0.5rem;
   font-size: 0.7rem;
-  border: 1px solid #30363d;
+  border: 1px solid var(--border-muted);
   border-radius: 4px;
-  background: #21262d;
+  background: var(--bg-panel-elevated);
   color: inherit;
   cursor: pointer;
 }
 
+.small-btn:hover:not(:disabled) {
+  background: var(--border-subtle);
+}
+
 .hint {
   font-size: 0.75rem;
-  color: #6e7681;
+  color: var(--text-faint);
   margin: 0 0 0.75rem;
   line-height: 1.4;
 }
@@ -113,15 +133,15 @@ onMounted(() => {
   margin-bottom: 0.75rem;
   padding: 0.4rem 0.75rem;
   font-size: 0.8125rem;
-  border: 1px solid #30363d;
+  border: 1px solid var(--border-muted);
   border-radius: 6px;
-  background: #21262d;
+  background: var(--bg-panel-elevated);
   color: inherit;
   cursor: pointer;
 }
 
 .register-btn:hover {
-  background: #30363d;
+  background: var(--border-subtle);
 }
 
 .plugin-list {
@@ -135,36 +155,36 @@ onMounted(() => {
   gap: 0.15rem;
   padding: 0.5rem;
   margin-bottom: 0.35rem;
-  background: #0d1117;
-  border: 1px solid #30363d;
+  background: var(--bg-input);
+  border: 1px solid var(--border-muted);
   border-radius: 4px;
   font-size: 0.75rem;
 }
 
 .plugin-name {
   font-weight: 600;
-  color: #e6edf3;
+  color: var(--text-primary);
 }
 
 .plugin-meta {
-  color: #8b949e;
+  color: var(--text-muted);
   word-break: break-all;
 }
 
 .plugin-state {
-  color: #58a6ff;
+  color: var(--accent);
   text-transform: capitalize;
 }
 
 .empty {
   font-size: 0.75rem;
-  color: #6e7681;
+  color: var(--text-faint);
   margin: 0;
 }
 
 .message {
   margin: 0.5rem 0 0;
   font-size: 0.75rem;
-  color: #8b949e;
+  color: var(--text-muted);
 }
 </style>

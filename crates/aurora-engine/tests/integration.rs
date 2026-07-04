@@ -2,6 +2,86 @@ use aurora_core::ParameterBundle;
 
 use aurora_engine::generate_composition;
 
+fn ui_default_params() -> ParameterBundle {
+    use aurora_core::UiParameterSnapshot;
+    let mut p = ParameterBundle::from(UiParameterSnapshot::default());
+    p.style.genre = "pop".into();
+    p
+}
+
+#[test]
+fn ui_default_params_generate_without_search_exhausted() {
+    let params = ui_default_params();
+    generate_composition(params).expect("UI default params should generate successfully");
+}
+
+#[test]
+fn non_major_modes_generate_without_search_exhausted() {
+    for mode in ["dorian", "phrygian", "lydian", "mixolydian", "minor"] {
+        let mut params = ui_default_params();
+        params.mode.mode = mode.into();
+        params.search.seed = Some(42);
+        generate_composition(params.clone())
+            .unwrap_or_else(|e| panic!("mode {mode} should generate, got: {e}"));
+    }
+}
+
+#[test]
+fn different_seeds_produce_different_melodies() {
+    let mut p1 = ui_default_params();
+    p1.search.seed = Some(1);
+    p1.form.section_lengths = vec![8];
+    let mut p2 = p1.clone();
+    p2.search.seed = Some(999);
+
+    let m1 = melody_pitches(&generate_composition(p1).expect("seed 1"));
+    let m2 = melody_pitches(&generate_composition(p2).expect("seed 999"));
+    assert_ne!(m1, m2, "different seeds should yield different melody sequences");
+}
+
+fn melody_pitches(comp: &aurora_ast::Composition) -> Vec<u8> {
+    comp.movements
+        .iter()
+        .flat_map(|m| &m.sections)
+        .flat_map(|s| &s.phrases)
+        .flat_map(|p| &p.measures)
+        .flat_map(|m| &m.voices)
+        .filter(|v| v.voice_id.0 == 0)
+        .flat_map(|v| &v.events)
+        .filter_map(|e| match e {
+            aurora_ast::Event::Note(n) if !n.is_drum => Some(n.pitch.midi),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn flow_progression_mode_generates() {
+    let mut params = ui_default_params();
+    params.harmony.progression_mode = aurora_core::ProgressionMode::Flow;
+    params.harmony.complexity = 0.6;
+    params.form.section_lengths = vec![16];
+    let comp = generate_composition(params).expect("flow mode should generate");
+    let measures: Vec<_> = comp
+        .movements
+        .iter()
+        .flat_map(|m| &m.sections)
+        .flat_map(|s| &s.phrases)
+        .flat_map(|p| &p.measures)
+        .collect();
+    assert_eq!(measures.len(), 16);
+}
+
+#[test]
+fn chromatic_harmony_at_default_complexity_does_not_exhaust_melody() {
+    let mut params = ui_default_params();
+    params.harmony.complexity = 0.5;
+    params.scale.borrowed_chord_tolerance = 0.3;
+    params.search.seed = Some(7);
+    params.form.section_lengths = vec![8];
+    generate_composition(params).expect("chromatic chords at complexity 0.5 must not exhaust search");
+}
+
 #[test]
 fn integration_generates_sixteen_bars_with_harmony_and_melody() {
     let mut params = ParameterBundle::default();
@@ -50,7 +130,11 @@ fn integration_generates_sixteen_bars_with_harmony_and_melody() {
         })
         .collect();
 
-    assert_eq!(melody_notes.len(), 64, "expected quarter note on each beat");
+    assert!(
+        melody_notes.len() >= 64,
+        "expected at least one melody note per quarter beat, got {}",
+        melody_notes.len()
+    );
 
     for note in &melody_notes {
         assert!(
@@ -95,7 +179,11 @@ fn integration_generates_thirty_two_bars_multi_voice_with_drums() {
         .map(|v| v.role)
         .collect();
     assert!(voice_roles.contains(&aurora_ast::VoiceRole::Melody));
-    assert!(voice_roles.contains(&aurora_ast::VoiceRole::Alto));
+    assert!(
+        voice_roles.contains(&aurora_ast::VoiceRole::HarmonyPad)
+            || voice_roles.contains(&aurora_ast::VoiceRole::Alto),
+        "inner harmonic voice (chords or alto counterpoint)"
+    );
     assert!(voice_roles.contains(&aurora_ast::VoiceRole::Bass));
     assert!(voice_roles.contains(&aurora_ast::VoiceRole::Drums));
 
@@ -108,14 +196,23 @@ fn integration_generates_thirty_two_bars_multi_voice_with_drums() {
     assert_eq!(drums_voice.midi_channel, 10);
 
     let melody_count = count_notes_for_voice(&measures, 0);
-    let alto_count = count_notes_for_voice(&measures, 1);
+    let inner_count = count_notes_for_voice(&measures, 1);
     let bass_count = count_notes_for_voice(&measures, 2);
     let drum_count = count_drum_notes(&measures, 3);
 
-    assert_eq!(melody_count, 128, "32 bars × 4 beats melody");
-    assert!(alto_count >= 128, "alto should fill all rhythmic slots");
+    assert!(
+        melody_count >= 128,
+        "32 bars × 4 beats melody minimum, got {melody_count}"
+    );
+    assert!(
+        inner_count >= 32,
+        "chord/accompaniment voice should emit block chords, got {inner_count}"
+    );
     assert!(bass_count >= 128, "bass should fill all rhythmic slots");
-    assert!(drum_count > 0, "drums should have hits");
+    assert!(
+        drum_count >= 32,
+        "drums should have kick/snare/hihat hits per bar, got {drum_count}"
+    );
 
     for measure in &measures {
         assert!(!measure.harmony_slots.is_empty());

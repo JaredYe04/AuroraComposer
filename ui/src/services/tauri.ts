@@ -72,6 +72,32 @@ export async function applyNotePatch(
   });
 }
 
+export async function deleteNote(nodeId: NodeId): Promise<CompositionSummary> {
+  return invoke<CompositionSummary>('delete_note', { node_id: nodeId });
+}
+
+export interface InsertNoteArgs {
+  measureGlobal: number;
+  voiceId: number;
+  beatNumer: number;
+  beatDenom: number;
+  midi: number;
+  isDrum: boolean;
+}
+
+export async function insertNote(args: InsertNoteArgs): Promise<CompositionSummary> {
+  return invoke<CompositionSummary>('insert_note', {
+    args: {
+      measure_global: args.measureGlobal,
+      voice_id: args.voiceId,
+      beat_numer: args.beatNumer,
+      beat_denom: args.beatDenom,
+      midi: args.midi,
+      is_drum: args.isDrum,
+    },
+  });
+}
+
 export async function saveProject(path: string): Promise<void> {
   return invoke<void>('save_project', { path });
 }
@@ -80,8 +106,8 @@ export async function loadProject(path: string): Promise<CompositionSummary> {
   return invoke<CompositionSummary>('load_project', { path });
 }
 
-export async function newProject(): Promise<void> {
-  return invoke<void>('new_project');
+export async function newProject(): Promise<CompositionSummary> {
+  return invoke<CompositionSummary>('new_project');
 }
 
 export async function exportPdfBytes(): Promise<number[]> {

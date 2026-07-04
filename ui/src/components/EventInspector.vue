@@ -194,40 +194,40 @@ watch(() => selection.primaryEventId, loadChain, { immediate: true });
   font-size: 0.875rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #8b949e;
+  color: var(--text-muted);
 }
 
 .empty-state,
 .loading {
-  color: #8b949e;
+  color: var(--text-muted);
   padding: 1rem 0;
 }
 
 .error {
-  color: #f85149;
+  color: var(--error);
 }
 
 .event-header {
   padding-bottom: 0.5rem;
-  border-bottom: 1px solid #30363d;
+  border-bottom: 1px solid var(--border-muted);
 }
 
 .event-kind {
   margin: 0;
   font-weight: 600;
-  color: #e6edf3;
+  color: var(--text-primary);
 }
 
 .event-meta {
   margin: 0.25rem 0 0;
-  color: #8b949e;
+  color: var(--text-muted);
 }
 
 .summary-box {
   margin-top: 0.5rem;
   padding: 0.75rem;
-  background: #0d1117;
-  border: 1px solid #388bfd44;
+  background: var(--bg-input);
+  border: 1px solid var(--accent-soft);
   border-radius: 6px;
 }
 
@@ -241,14 +241,14 @@ watch(() => selection.primaryEventId, loadChain, { immediate: true });
   padding: 0.35rem 0;
   background: none;
   border: none;
-  color: #c9d1d9;
+  color: var(--text-primary);
   cursor: pointer;
   font-size: 0.8125rem;
   font-weight: 600;
 }
 
 .section-toggle:hover {
-  color: #58a6ff;
+  color: var(--accent);
 }
 
 .rule-list {
@@ -263,29 +263,29 @@ watch(() => selection.primaryEventId, loadChain, { immediate: true });
   gap: 0.25rem 0.5rem;
   padding: 0.5rem;
   margin-bottom: 0.35rem;
-  background: #0d1117;
+  background: var(--bg-input);
   border-radius: 4px;
-  border: 1px solid #30363d;
+  border: 1px solid var(--border-muted);
 }
 
 .rule-id {
   font-weight: 600;
-  color: #58a6ff;
+  color: var(--accent);
 }
 
 .rule-name {
   grid-column: 1 / -1;
-  color: #8b949e;
+  color: var(--text-muted);
   font-size: 0.75rem;
 }
 
 .rule-score {
-  color: #3fb950;
+  color: var(--success);
   font-weight: 600;
 }
 
 .rule-score.negative {
-  color: #f85149;
+  color: var(--error);
 }
 
 .detail-list {
@@ -296,29 +296,29 @@ watch(() => selection.primaryEventId, loadChain, { immediate: true });
 }
 
 .detail-list dt {
-  color: #8b949e;
+  color: var(--text-muted);
 }
 
 .detail-list dd {
   margin: 0;
-  color: #e6edf3;
+  color: var(--text-primary);
 }
 
 .detail-text {
   margin: 0.5rem 0 0;
-  color: #c9d1d9;
+  color: var(--text-primary);
 }
 
 .chain-list {
   margin: 0.5rem 0 0;
   padding-left: 1.25rem;
-  color: #8b949e;
+  color: var(--text-muted);
 }
 
 .link-btn {
   background: none;
   border: none;
-  color: #58a6ff;
+  color: var(--accent);
   cursor: pointer;
   padding: 0;
   text-align: left;
@@ -330,7 +330,7 @@ watch(() => selection.primaryEventId, loadChain, { immediate: true });
 }
 
 .muted {
-  color: #6e7681;
+  color: var(--text-faint);
   font-style: italic;
 }
 </style>

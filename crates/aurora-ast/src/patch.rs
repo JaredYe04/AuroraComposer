@@ -6,12 +6,12 @@ use aurora_core::{AuroraError, NodeId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::events::Event;
+use crate::events::{Event, NoteEvent};
 use crate::nodes::{
     Composition, HarmonySlot, Measure, MeasureVoice, Movement, Phrase, Section, VoiceId,
 };
-use crate::provenance::{PatchId, PipelineStageId, ProvenanceAgent, ProvenanceSource};
-use crate::types::Pitch;
+use crate::provenance::{PatchId, PipelineStageId, Provenance, ProvenanceAgent, ProvenanceSource};
+use crate::types::{BeatOffset, Pitch, WrittenDuration};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PatchRecord {
@@ -380,6 +380,100 @@ pub fn patch_update_note_pitch(
     let mut updated = comp.clone();
     set_note_midi(&mut updated, node_id, new_midi, true)?;
     Ok(updated)
+}
+
+/// Delete an event by [`NodeId`].
+pub fn patch_delete_event(comp: &Composition, node_id: NodeId) -> Result<Composition, AuroraError> {
+    let patch = Patch {
+        id: PatchId(1),
+        ops: vec![PatchOp::DeleteNode { node_id }],
+        inverse: None,
+        description: "delete event".into(),
+    };
+    apply_patch(comp, &patch)
+}
+
+/// Insert a quarter note at the given measure and voice.
+pub fn patch_insert_note(
+    comp: &Composition,
+    measure_global: u32,
+    voice_id: VoiceId,
+    offset: BeatOffset,
+    midi: u8,
+    is_drum: bool,
+) -> Result<Composition, AuroraError> {
+    let measure_id = find_measure_id_by_global(comp, measure_global)?;
+    let event_id = next_event_id(comp);
+    let event = Event::Note(NoteEvent {
+        base: crate::events::TimedEventBase {
+            id: event_id,
+            offset,
+            duration: WrittenDuration {
+                note_type: crate::types::NoteType::Quarter,
+                dots: 0,
+                tuplet: None,
+            },
+            provenance: Provenance {
+                source: ProvenanceSource::ManualEdit,
+                stage: Some(PipelineStageId::Manual),
+                rule_ids: Vec::new(),
+                rule_refs: Vec::new(),
+                eval_score: None,
+                search: None,
+                parent: None,
+                created_at: "manual".into(),
+                agent: ProvenanceAgent::User { user_id: None },
+                parameters_hash: None,
+                explanation: Some(format!("Inserted note MIDI {midi}")),
+            },
+            visible: true,
+        },
+        pitch: Pitch::from_midi(midi),
+        velocity: if is_drum { 100 } else { 80 },
+        tie: crate::events::TieSpec::None,
+        articulations: vec![],
+        ornaments: vec![],
+        lyric: None,
+        pitch_role: None,
+        stem_direction: None,
+        beam_group: None,
+        is_drum,
+        drum_map: None,
+    });
+    patch_insert_event(comp, measure_id, voice_id, event)
+}
+
+fn find_measure_id_by_global(comp: &Composition, global: u32) -> Result<NodeId, AuroraError> {
+    for movement in &comp.movements {
+        for section in &movement.sections {
+            for phrase in &section.phrases {
+                for measure in &phrase.measures {
+                    if measure.number.global == global {
+                        return Ok(measure.id);
+                    }
+                }
+            }
+        }
+    }
+    Err(AuroraError::PatchFailed(format!("measure {global} not found")))
+}
+
+fn next_event_id(comp: &Composition) -> NodeId {
+    let mut max_index = 0u64;
+    for movement in &comp.movements {
+        for section in &movement.sections {
+            for phrase in &section.phrases {
+                for measure in &phrase.measures {
+                    for mv in &measure.voices {
+                        for event in &mv.events {
+                            max_index = max_index.max(event.id().index);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    NodeId::new(max_index + 1, 0)
 }
 
 #[cfg(test)]

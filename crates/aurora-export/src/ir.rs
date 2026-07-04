@@ -96,6 +96,7 @@ pub struct IrNote {
     pub velocity: u8,
     pub duration_ticks: u32,
     pub end_tick: u64,
+    pub is_drum: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -242,18 +243,44 @@ pub fn project_ast_to_ir(comp: &Composition, ppq: u16) -> Result<MusicIr, Export
     let channel_index = build_channel_index(&events, comp);
 
     let default_key = comp.global.key_map.default;
+    let mut key_events = vec![IrKeyEvent {
+        tick: 0,
+        fifths: key_fifths(default_key),
+        mode: mode_label(default_key.mode).into(),
+    }];
+    for event in &events {
+        if let IrEvent::KeyChange(k) = event {
+            key_events.push(IrKeyEvent {
+                tick: k.tick,
+                fifths: k.fifths,
+                mode: k.mode.clone(),
+            });
+        }
+    }
+    key_events.sort_by_key(|k| k.tick);
+    key_events.dedup_by_key(|k| k.tick);
+
+    let mut meter_events = vec![IrMeterEvent {
+        tick: 0,
+        beats: default_meter.beats,
+        beat_type: default_meter.beat_type,
+    }];
+    for event in &events {
+        if let IrEvent::TimeSignatureChange(t) = event {
+            meter_events.push(IrMeterEvent {
+                tick: t.tick,
+                beats: t.beats,
+                beat_type: t.beat_type,
+            });
+        }
+    }
+    meter_events.sort_by_key(|m| m.tick);
+    meter_events.dedup_by_key(|m| m.tick);
+
     let timeline = ResolvedTimeline {
         tempo_events: vec![IrTempoEvent { tick: 0, bpm: tempo_bpm }],
-        meter_events: vec![IrMeterEvent {
-            tick: 0,
-            beats: default_meter.beats,
-            beat_type: default_meter.beat_type,
-        }],
-        key_events: vec![IrKeyEvent {
-            tick: 0,
-            fifths: key_fifths(default_key),
-            mode: mode_label(default_key.mode).into(),
-        }],
+        meter_events,
+        key_events,
     };
 
     Ok(MusicIr {
@@ -293,6 +320,7 @@ fn note_to_ir(
         velocity: note.velocity,
         duration_ticks,
         end_tick: start + u64::from(duration_ticks),
+        is_drum: note.is_drum,
     }
 }
 
@@ -403,7 +431,14 @@ fn measure_quarters(meter: TimeSignature) -> f64 {
 }
 
 fn key_fifths(key: KeySignature) -> i8 {
-    let pc = key.tonic.pc;
+    let tonic_pc = match key.mode {
+        Mode::NaturalMinor | Mode::HarmonicMinor | Mode::MelodicMinor => (key.tonic.pc + 3) % 12,
+        _ => key.tonic.pc,
+    };
+    major_key_fifths(tonic_pc)
+}
+
+fn major_key_fifths(pc: u8) -> i8 {
     match pc {
         0 => 0,
         1 => -5,

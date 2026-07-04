@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+
+use crate::progression::ProgressionMode;
 use serde_json::Value;
 
 /// Complete user parameter state for generation and reproducibility.
@@ -17,8 +19,10 @@ pub struct ParameterBundle {
     pub form: FormParams,
     pub theme: ThemeParams,
     pub harmony: HarmonyParams,
+    pub melody: MelodyParams,
     pub voice: VoiceParams,
     pub texture: TextureParams,
+    pub accompaniment: AccompanimentParams,
     pub rhythm: RhythmParams,
     pub dynamics: DynamicsParams,
     pub cadence: CadenceParams,
@@ -40,8 +44,10 @@ impl Default for ParameterBundle {
             form: FormParams::default(),
             theme: ThemeParams::default(),
             harmony: HarmonyParams::default(),
+            melody: MelodyParams::default(),
             voice: VoiceParams::default(),
             texture: TextureParams::default(),
+            accompaniment: AccompanimentParams::default(),
             rhythm: RhythmParams::default(),
             dynamics: DynamicsParams::default(),
             cadence: CadenceParams::default(),
@@ -131,6 +137,10 @@ pub struct FormParams {
     pub section_lengths: Vec<u16>,
     pub intro_bars: u16,
     pub outro_bars: u16,
+    /// Phrase model: "period", "sentence", or "free".
+    pub phrase_model: String,
+    /// Measures per phrase (default 4).
+    pub phrase_length: u8,
 }
 
 impl Default for FormParams {
@@ -140,6 +150,8 @@ impl Default for FormParams {
             section_lengths: vec![8, 8],
             intro_bars: 0,
             outro_bars: 0,
+            phrase_model: "period".into(),
+            phrase_length: 4,
         }
     }
 }
@@ -157,7 +169,7 @@ impl Default for ThemeParams {
         Self {
             theme_count: 1,
             motif_length: 4,
-            repetition_ratio: 0.6,
+            repetition_ratio: 0.70,
         }
     }
 }
@@ -169,15 +181,103 @@ pub struct HarmonyParams {
     pub dissonance: f32,
     pub cadence_strength: f32,
     pub harmonic_rhythm: f32,
+    /// Loop (repeating cell) vs flow (non-repeating arc).
+    pub progression_mode: ProgressionMode,
+    /// Chords in one loop cell (typically 4).
+    pub loop_length: u8,
+    /// Weight for last→first chord seam quality in loop mode (0–1).
+    pub seam_quality_weight: f32,
 }
 
 impl Default for HarmonyParams {
     fn default() -> Self {
         Self {
             complexity: 0.5,
-            dissonance: 0.3,
+            dissonance: 0.2,
             cadence_strength: 0.7,
-            harmonic_rhythm: 0.5,
+            harmonic_rhythm: 0.72,
+            progression_mode: ProgressionMode::Loop,
+            loop_length: 4,
+            seam_quality_weight: 0.85,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MelodyParams {
+    /// Bias toward chord tones in candidate pool (0–1).
+    pub chord_tone_bias: f32,
+    /// Bias toward neighbor tones (0–1).
+    pub neighbor_tone_bias: f32,
+    /// Bias toward passing tones (0–1).
+    pub passing_tone_bias: f32,
+    /// Maximum leap in semitones before requiring stepwise return.
+    pub leap_limit_semitones: u8,
+    /// Target position of melodic climax within phrase (0–1, default 0.65).
+    pub climax_ratio: f32,
+    /// Weight for motif-realization candidates (0–1).
+    pub motif_weight: f32,
+    /// Enable double-stop melody candidates (3rds/sixths).
+    pub double_stop_enabled: bool,
+    /// 0 = chromatic/jazz openness; 1 = strict common-practice consonance.
+    pub tonal_conservatism: f32,
+}
+
+/// Bias helpers derived from tonal conservatism (t).
+#[inline]
+pub fn derived_chord_tone_bias(t: f32) -> f32 {
+    (0.50 + 0.3077 * t).clamp(0.0, 1.0)
+}
+
+#[inline]
+pub fn derived_neighbor_tone_bias(t: f32) -> f32 {
+    (0.22 - 0.1077 * t).clamp(0.0, 1.0)
+}
+
+#[inline]
+pub fn derived_passing_tone_bias(t: f32) -> f32 {
+    (0.28 - 0.2769 * t).clamp(0.0, 1.0)
+}
+
+impl Default for MelodyParams {
+    fn default() -> Self {
+        let t = 0.75;
+        Self {
+            chord_tone_bias: derived_chord_tone_bias(t),
+            neighbor_tone_bias: derived_neighbor_tone_bias(t),
+            passing_tone_bias: derived_passing_tone_bias(t),
+            leap_limit_semitones: 6,
+            climax_ratio: 0.65,
+            motif_weight: 0.72,
+            double_stop_enabled: false,
+            tonal_conservatism: t,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AccompanimentParams {
+    /// Generate block-chord accompaniment voice (piano/strings).
+    pub enabled: bool,
+    /// `"auto"`, `"piano"`, or `"strings"`.
+    pub instrument: String,
+    /// 0 = sparse shell; 1 = full triad block voicing.
+    pub voicing_density: f32,
+    /// Inner voice register bounds.
+    pub register_min: u8,
+    pub register_max: u8,
+}
+
+impl Default for AccompanimentParams {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            instrument: "auto".into(),
+            voicing_density: 0.65,
+            register_min: 48,
+            register_max: 72,
         }
     }
 }
@@ -206,12 +306,15 @@ impl Default for VoiceParams {
 #[serde(default)]
 pub struct TextureParams {
     pub homophony_polyphony_balance: f32,
+    /// Enable HarmonyPad inner voices when homophonic (>0.85 balance).
+    pub harmony_pad_enabled: bool,
 }
 
 impl Default for TextureParams {
     fn default() -> Self {
         Self {
             homophony_polyphony_balance: 0.5,
+            harmony_pad_enabled: true,
         }
     }
 }
@@ -231,7 +334,7 @@ impl Default for RhythmParams {
     fn default() -> Self {
         Self {
             density: 0.5,
-            syncopation: 0.3,
+            syncopation: 0.25,
             subdivision: 4,
             swing: 0.0,
             time_signature_beats: 4,
@@ -314,6 +417,10 @@ pub struct DrumsParams {
     pub density: f32,
     pub fill_frequency: f32,
     pub pattern_complexity: f32,
+    /// Emphasis on downbeats / backbeats (0 = even, 1 = strict kick 1&3 / snare 2&4).
+    pub accent_emphasis: f32,
+    /// Hi-hat density (0 = sparse quarters, 1 = dense 16ths with openings).
+    pub hihat_density: f32,
 }
 
 impl Default for DrumsParams {
@@ -322,6 +429,8 @@ impl Default for DrumsParams {
             density: 0.5,
             fill_frequency: 0.1,
             pattern_complexity: 0.4,
+            accent_emphasis: 0.75,
+            hihat_density: 0.6,
         }
     }
 }
@@ -343,6 +452,34 @@ impl Default for SearchParams {
             max_iterations: 10_000,
             seed: None,
         }
+    }
+}
+
+/// Clamp risky parameter combos so extreme UI settings stay musically usable.
+pub fn sanitize_generation_bundle(bundle: &mut ParameterBundle) {
+    let mut t = bundle.melody.tonal_conservatism.clamp(0.35, 1.0);
+    let c = bundle.harmony.complexity.clamp(0.0, 1.0);
+
+    if t < 0.45 && c > 0.55 {
+        t = 0.45;
+    }
+
+    bundle.melody.tonal_conservatism = t;
+    bundle.melody.chord_tone_bias = derived_chord_tone_bias(t);
+    bundle.melody.neighbor_tone_bias = derived_neighbor_tone_bias(t);
+    bundle.melody.passing_tone_bias = derived_passing_tone_bias(t);
+
+    if t < 0.6 {
+        bundle.harmony.dissonance = bundle.harmony.dissonance.min(0.25);
+        bundle.scale.borrowed_chord_tolerance = bundle.scale.borrowed_chord_tolerance.min(0.15);
+    }
+    if t < 0.5 && c > 0.6 {
+        bundle.harmony.complexity = c.min(0.6);
+    }
+
+    if bundle.theme.theme_count <= 1 {
+        let seed = bundle.search.seed.unwrap_or(42);
+        bundle.theme.theme_count = 2 + ((seed % 3) as u8);
     }
 }
 
@@ -371,6 +508,7 @@ mod tests {
             "form",
             "theme",
             "harmony",
+            "melody",
             "voice",
             "texture",
             "rhythm",

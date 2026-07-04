@@ -6,6 +6,8 @@ echo ========================================
 echo  Aurora Composer - Build and Run
 echo ========================================
 echo.
+echo For UI development with hot reload, use dev.cmd instead.
+echo.
 
 echo [1/3] Installing UI dependencies...
 cd ui

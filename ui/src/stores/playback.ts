@@ -11,6 +11,7 @@ import {
 export const usePlaybackStore = defineStore('playback', () => {
   const isPlaying = ref(false);
   const globalBeat = ref(0);
+  const playStartBeat = ref(0);
   const tempoBpm = ref(120);
   const beatsPerMeasure = ref(4);
   const totalMeasures = ref(8);
@@ -39,6 +40,16 @@ export const usePlaybackStore = defineStore('playback', () => {
     return beat * (60 / bpm);
   }
 
+  function setFromMidi(durationSec: number, bpm: number, beatsPerMeasureVal: number) {
+    tempoBpm.value = bpm;
+    beatsPerMeasure.value = Math.max(1, beatsPerMeasureVal);
+    const totalBeats = beatFromSeconds(durationSec, bpm);
+    totalMeasures.value = Math.max(1, Math.ceil(totalBeats / beatsPerMeasure.value));
+    if (globalBeat.value > totalGlobalBeats.value) {
+      globalBeat.value = 0;
+    }
+  }
+
   function setTimelineContext(measures: number, bpm: number, bpmPerMeasure = 4) {
     totalMeasures.value = Math.max(1, measures);
     tempoBpm.value = bpm;
@@ -62,10 +73,17 @@ export const usePlaybackStore = defineStore('playback', () => {
 
   function resetPlayhead() {
     globalBeat.value = 0;
+    playStartBeat.value = 0;
   }
 
-  function onPlayStart(bpm: number, durationSeconds: number) {
-    tempoBpm.value = bpm;
+  function restoreOnStop() {
+    globalBeat.value = playStartBeat.value;
+    isPlaying.value = false;
+  }
+
+  function onPlayStart(bpm: number, durationSeconds: number, beatsPerMeasureVal: number) {
+    playStartBeat.value = globalBeat.value;
+    setFromMidi(durationSeconds, bpm, beatsPerMeasureVal);
     isPlaying.value = true;
     setOnPlaybackTick((seconds, state) => {
       if (state === 'playing') {
@@ -74,16 +92,14 @@ export const usePlaybackStore = defineStore('playback', () => {
       } else {
         isPlaying.value = false;
         if (state === 'stopped') {
-          globalBeat.value = 0;
+          restoreOnStop();
         }
       }
     });
-    void durationSeconds;
   }
 
   function onPlayStop() {
-    isPlaying.value = false;
-    globalBeat.value = 0;
+    restoreOnStop();
     setOnPlaybackTick(null);
   }
 
@@ -96,6 +112,7 @@ export const usePlaybackStore = defineStore('playback', () => {
   return {
     isPlaying,
     globalBeat,
+    playStartBeat,
     tempoBpm,
     beatsPerMeasure,
     totalMeasures,
@@ -103,10 +120,12 @@ export const usePlaybackStore = defineStore('playback', () => {
     playheadMeasure,
     playheadBeatInMeasure,
     playheadRatio,
+    setFromMidi,
     setTimelineContext,
     seekToGlobalBeat,
     seekToRatio,
     resetPlayhead,
+    restoreOnStop,
     onPlayStart,
     onPlayStop,
     syncFromTransport,

@@ -22,6 +22,11 @@ const totalMeasures = computed(
   () => props.model?.total_measures ?? props.model?.sections.at(-1)?.end_measure ?? 8,
 );
 
+function cssColor(name: string, fallback: string): string {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+
 function sectionColor(role: unknown): string {
   const key = sectionRoleLabel(role as Parameters<typeof sectionRoleLabel>[0]);
   return SECTION_COLORS[key] ?? SECTION_COLORS.Default;
@@ -48,7 +53,7 @@ function drawRuler() {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   ctx.scale(dpr, dpr);
-  ctx.fillStyle = '#0d1117';
+  ctx.fillStyle = cssColor('--bg-input', '#0d1117');
   ctx.fillRect(0, 0, w, height);
 
   const zoom = selection.zoomX;
@@ -56,8 +61,8 @@ function drawRuler() {
   const startMeasure = Math.max(1, xToMeasure(0, zoom, scroll) - 1);
   const endMeasure = xToMeasure(w, zoom, scroll) + 1;
 
-  ctx.strokeStyle = '#30363d';
-  ctx.fillStyle = '#8b949e';
+  ctx.strokeStyle = cssColor('--border-muted', '#30363d');
+  ctx.fillStyle = cssColor('--text-muted', '#8b949e');
   ctx.font = '11px Segoe UI, system-ui, sans-serif';
   ctx.textAlign = 'center';
 
@@ -70,14 +75,17 @@ function drawRuler() {
     ctx.lineTo(x, height);
     ctx.stroke();
 
-    ctx.fillStyle = m === selection.selectedMeasure ? '#58a6ff' : '#8b949e';
+    ctx.fillStyle =
+      m === selection.selectedMeasure
+        ? cssColor('--accent', '#58a6ff')
+        : cssColor('--text-muted', '#8b949e');
     ctx.fillText(String(m), x + zoom / 2, 20);
-    ctx.fillStyle = '#8b949e';
+    ctx.fillStyle = cssColor('--text-muted', '#8b949e');
   }
 
   if (props.model || playback.globalBeat > 0) {
-    const px = globalBeatToX(playback.globalBeat, 4, zoom, scroll, 0);
-    ctx.strokeStyle = '#f85149';
+    const px = globalBeatToX(playback.globalBeat, playback.beatsPerMeasure, zoom, scroll, 0);
+    ctx.strokeStyle = cssColor('--playhead', '#f85149');
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(px, 0);

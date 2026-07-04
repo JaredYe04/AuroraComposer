@@ -66,21 +66,25 @@ Style → Emotion → Structure → Theme → Phrase hooks → Harmony → Rhyth
 |--------|--------------|
 | MIDI Type 1 | `export_midi` |
 | MusicXML 4.0 | `export_musicxml` |
-| ABC lead sheet | `export_abc` |
+| ABC full score (multi-voice) | `export_abc` (Full mode) |
+| MusicXML full score | `export_musicxml` (per-part clefs, drum unpitched) |
 | SVG score preview | `export_svg_preview` |
 | PDF bytes (backend) | `export_pdf_bytes` |
-| In-app score | ABC (abcjs), MusicXML/PDF (Verovio WASM + jsPDF) |
+| In-app score | ABC (abcjs), MusicXML/PDF (Verovio WASM); auto-refresh on edit |
+| Tauri file save | MIDI / MusicXML / ABC / PDF via native save dialog |
 
 ### UI
 
-- 3-column workspace (parameters / timeline+piano roll / inspector+score)
-- **ScoreViewer**: ABC rendering (abcjs), MusicXML + PDF preview (Verovio WASM)
+- 3-column workspace (parameters / timeline+piano roll / inspector+score); **right panel defaults to 50% width**
+- **VoiceSwitcher**: per-voice piano roll (Melody / Bass / Drums drum-map rows)
+- **ScoreViewer**: full-score MusicXML → Verovio; revision sync on patch
 - **ProjectMenu**: New / Load / Save `.aurora` (CBOR)
-- **PianoRoll**: drag pitch → `apply_note_patch` → AST patch
-- **PluginPanel**: list + register external WASM plugins
+- **PluginMenu**: plugins in header dropdown (removed from left sidebar)
+- **PianoRoll**: pointer / box / brush / eraser tools; drag pitch; insert/delete notes
+- Keyboard: Space play/stop (restore playhead), Ctrl+C/V/B, Delete
+- **GM SoundFont playback** (soundfont-player + Tone.Part); seek/reschedule
 - Provenance tooltip on hover, full chain in inspector
-- Tone.js MIDI playback
-- Expanded ACAS parameter panel (emotion, harmony, counterpoint, drums)
+- Light/dark theme CSS variables on menus and timeline
 
 ### Plugins
 

@@ -1,13 +1,18 @@
-use aurora_ast::{CadenceType, Composition, EmotionProfile, PipelineStageId};
+use aurora_ast::{CadenceType, ChordSymbol, Composition, EmotionProfile, PipelineStageId};
 use aurora_core::ParameterBundle;
 use std::collections::HashMap;
 
+use crate::motif::Motif;
+
+pub mod rhythm_patterns;
+pub mod chord_voice;
 pub mod common;
 pub mod counterpoint;
 pub mod decoration;
 pub mod drums;
 pub mod emotion_resolver;
 pub mod harmony;
+pub mod harmony_pad;
 pub mod melody;
 pub mod phrase;
 pub mod repair;
@@ -17,6 +22,8 @@ pub mod style_resolver;
 pub mod theme;
 pub mod validation;
 pub mod bass;
+pub mod bass_generator;
+pub mod voicing;
 
 pub use bass::generate_bass;
 pub use counterpoint::generate_counterpoint;
@@ -50,7 +57,23 @@ pub struct PipelineState {
     pub cadence_chord_roots: HashMap<u32, u8>,
     /// Soft violations flagged by PHRASE-HOOK-3 for Repair stage.
     pub phrase_violations: Vec<PhraseViolation>,
+    /// Generated motifs keyed by motif id (from Stage 4).
+    pub motifs: HashMap<String, Motif>,
+    /// Per-phrase motif cursor state for melody generation.
+    pub phrase_motif_plans: Vec<PhraseMotifPlan>,
+    /// Per-beat chord grid built in Stage 5 (P7).
+    pub per_beat_chord_grid: Vec<ChordSymbol>,
     pub validation_report: Option<ValidationReport>,
+}
+
+/// Motif assignment for one phrase.
+#[derive(Clone, Debug)]
+pub struct PhraseMotifPlan {
+    pub phrase_index: u32,
+    pub motif_id: String,
+    pub base_midi: u8,
+    pub region_beats: usize,
+    pub phrase_start_beat: usize,
 }
 
 impl PipelineState {
@@ -71,6 +94,9 @@ impl PipelineState {
             cadence_targets: HashMap::new(),
             cadence_chord_roots: HashMap::new(),
             phrase_violations: Vec::new(),
+            motifs: HashMap::new(),
+            phrase_motif_plans: Vec::new(),
+            per_beat_chord_grid: Vec::new(),
             validation_report: None,
         }
     }

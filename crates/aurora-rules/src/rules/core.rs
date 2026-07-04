@@ -17,6 +17,9 @@ pub fn hard_rules() -> Vec<HardRule> {
 pub fn soft_rules() -> Vec<SoftRule> {
     vec![
         cont_001_soft_soft(),
+        mel_contour_001_soft(),
+        mel_close_001_soft(),
+        mel_rep_001_soft(),
         moti_001_soft(),
         drum_003_soft(),
         vled_001_soft(),
