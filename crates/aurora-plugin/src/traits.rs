@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use aurora_ast::PipelineStageId;
 use aurora_core::ParameterBundle;
 use serde::{Deserialize, Serialize};
 
@@ -54,4 +56,22 @@ pub trait StylePlugin: Plugin {
     ) -> Result<StyleResolveResult, PluginError>;
 }
 
+/// AI plugin stub — proposes candidates or adjusts weights (api.md §10.6).
+pub trait AiPlugin: Plugin {
+    fn target_stages(&self) -> &[PipelineStageId];
+
+    fn adjust_weights(
+        &self,
+        base_weights: &HashMap<String, f32>,
+        params: &ParameterBundle,
+    ) -> Result<HashMap<String, f32>, PluginError> {
+        let _ = params;
+        Ok(base_weights.clone())
+    }
+
+    fn requires_network(&self) -> bool;
+    fn requires_api_key(&self) -> bool;
+}
+
 pub type DynStylePlugin = Arc<dyn StylePlugin>;
+pub type DynAiPlugin = Arc<dyn AiPlugin>;

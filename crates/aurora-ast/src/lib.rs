@@ -31,4 +31,5 @@ pub use provenance::{
     SearchContext, StateRef,
 };
 pub use project::{ParameterSnapshot, Project};
+pub use patch::{apply_patch, patch_insert_event, patch_update_note_pitch, Patch, PatchOp, PatchRecord};
 pub use types::{BeatOffset, NoteType, Pitch, PitchRange, Step, WrittenDuration};

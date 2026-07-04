@@ -3,7 +3,10 @@ import { computed, ref, watch } from 'vue';
 import { getEventProvenance, getProvenanceChain } from '@/services/tauri';
 import type { ProvenanceChain, ProvenanceChainEntry } from '@/types/aurora';
 import { useSelectionStore } from '@/stores/selection';
+import { formatFixed } from '@/utils/format';
+import { useI18n } from '@/composables/useI18n';
 
+const { t } = useI18n();
 const selection = useSelectionStore();
 const chain = ref<ProvenanceChain | null>(null);
 const loading = ref(false);
@@ -70,14 +73,14 @@ watch(() => selection.primaryEventId, loadChain, { immediate: true });
 <template>
   <div class="inspector">
     <header class="inspector-header">
-      <h2>Inspector</h2>
+      <h2>{{ t('inspector.title') }}</h2>
     </header>
 
-    <div v-if="!selection.primaryEventId" class="empty-state">
-      Select a note to inspect provenance
-    </div>
+    <p v-if="!selection.primaryEventId" class="empty-state">
+      {{ t('inspector.empty') }}
+    </p>
 
-    <div v-else-if="loading" class="loading">Loading provenance…</div>
+    <div v-else-if="loading" class="loading">{{ t('inspector.loading') }}</div>
 
     <div v-else-if="error" class="error">{{ error }}</div>
 
@@ -143,7 +146,7 @@ watch(() => selection.primaryEventId, loadChain, { immediate: true });
             {{ primaryEntry.provenance.search.beam_width }}
           </dd>
           <dt>Accumulated Score</dt>
-          <dd>{{ primaryEntry.provenance.search.accumulated_score.toFixed(1) }}</dd>
+          <dd>{{ formatFixed(primaryEntry.provenance.search.accumulated_score, 1, 0) }}</dd>
         </dl>
       </section>
 

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::params::ParameterBundle;
 
-/// Flat parameter DTO for Phase 2 prototype UI (maps to [`ParameterBundle`]).
+/// Flat parameter DTO for UI (maps to [`ParameterBundle`]).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct UiParameterSnapshot {
     pub key: u8,
@@ -10,6 +10,11 @@ pub struct UiParameterSnapshot {
     pub beam_width: u16,
     pub bars: u16,
     pub tempo_bpm: f64,
+    pub emotion_valence: f32,
+    pub emotion_arousal: f32,
+    pub harmony_complexity: f32,
+    pub counterpoint_strictness: f32,
+    pub drum_density: f32,
 }
 
 impl Default for UiParameterSnapshot {
@@ -20,6 +25,11 @@ impl Default for UiParameterSnapshot {
             beam_width: 8,
             bars: 8,
             tempo_bpm: 120.0,
+            emotion_valence: 0.5,
+            emotion_arousal: 0.5,
+            harmony_complexity: 0.5,
+            counterpoint_strictness: 0.5,
+            drum_density: 0.5,
         }
     }
 }
@@ -38,6 +48,11 @@ impl From<&ParameterBundle> for UiParameterSnapshot {
             beam_width: p.search.beam_width,
             bars,
             tempo_bpm: 120.0,
+            emotion_valence: p.emotion.valence,
+            emotion_arousal: p.emotion.arousal,
+            harmony_complexity: p.harmony.complexity,
+            counterpoint_strictness: p.counterpoint.strictness,
+            drum_density: p.drums.density,
         }
     }
 }
@@ -50,6 +65,11 @@ impl From<UiParameterSnapshot> for ParameterBundle {
         bundle.search.beam_width = ui.beam_width;
         bundle.form.section_lengths = vec![ui.bars];
         bundle.form.section_count = 1;
+        bundle.emotion.valence = ui.emotion_valence;
+        bundle.emotion.arousal = ui.emotion_arousal;
+        bundle.harmony.complexity = ui.harmony_complexity;
+        bundle.counterpoint.strictness = ui.counterpoint_strictness;
+        bundle.drums.density = ui.drum_density;
         bundle
     }
 }

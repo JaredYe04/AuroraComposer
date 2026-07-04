@@ -2,7 +2,8 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import type { TimelineModel } from '@/types/aurora';
 import { SECTION_COLORS, sectionRoleLabel } from '@/types/aurora';
-import { measureToX, xToMeasure } from '@/utils/pianoRoll';
+import { measureToX, xToMeasure, globalBeatToX } from '@/utils/pianoRoll';
+import { usePlaybackStore } from '@/stores/playback';
 import { useSelectionStore } from '@/stores/selection';
 
 const props = defineProps<{
@@ -11,6 +12,7 @@ const props = defineProps<{
 }>();
 
 const selection = useSelectionStore();
+const playback = usePlaybackStore();
 const containerRef = ref<HTMLDivElement | null>(null);
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 const width = ref(800);
@@ -73,8 +75,8 @@ function drawRuler() {
     ctx.fillStyle = '#8b949e';
   }
 
-  if (props.playheadMeasure != null) {
-    const px = measureToX(props.playheadMeasure, zoom, scroll);
+  if (props.model || playback.globalBeat > 0) {
+    const px = globalBeatToX(playback.globalBeat, 4, zoom, scroll, 0);
     ctx.strokeStyle = '#f85149';
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -119,7 +121,7 @@ onMounted(() => {
 onUnmounted(() => ro?.disconnect());
 
 watch(
-  () => [props.model, selection.zoomX, selection.scrollX, selection.selectedMeasure, props.playheadMeasure],
+  () => [props.model, selection.zoomX, selection.scrollX, selection.selectedMeasure, playback.globalBeat],
   () => drawRuler(),
   { deep: true },
 );
@@ -171,12 +173,13 @@ watch(
 <style scoped>
 .timeline {
   position: relative;
-  background: #161b22;
-  border: 1px solid #30363d;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-muted);
   border-radius: 6px;
   overflow: hidden;
   cursor: crosshair;
   user-select: none;
+  flex-shrink: 0;
 }
 
 .ruler-canvas {

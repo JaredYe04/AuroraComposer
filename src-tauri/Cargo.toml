@@ -18,11 +18,13 @@ aurora-core = { workspace = true }
 aurora-ast = { workspace = true }
 aurora-engine = { workspace = true }
 aurora-export = { workspace = true }
+aurora-plugin = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
 uuid = { workspace = true }
 
 [features]

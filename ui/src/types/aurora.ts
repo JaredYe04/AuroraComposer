@@ -25,6 +25,16 @@ export interface CompositionSummary {
   key: number;
 }
 
+export interface PluginInfo {
+  id: string;
+  name: string;
+  version: string;
+  plugin_type: string;
+  execution_tier: string;
+  state: string;
+  load_path: string;
+}
+
 export interface JobProgressEvent {
   job_id: string;
   stage_name: string;

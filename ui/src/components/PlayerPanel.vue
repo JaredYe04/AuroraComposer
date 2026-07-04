@@ -1,53 +1,32 @@
 <script setup lang="ts">
-import { onUnmounted, ref } from 'vue';
+import { onUnmounted, ref, watch } from 'vue';
 import * as Tone from 'tone';
-import { exportMidi } from '@/services/tauri';
-import { playMidiBytes, stopPlayback, playbackState } from '@/services/player';
+import { useI18n } from '@/composables/useI18n';
 import { useCompositionStore } from '@/stores/composition';
+import { usePlaybackStore } from '@/stores/playback';
 
+const { t } = useI18n();
 const compStore = useCompositionStore();
-const isPlaying = ref(false);
+const playback = usePlaybackStore();
 const volume = ref(0.7);
 const error = ref<string | null>(null);
 
-let pollId: number | null = null;
-
-function clearPoll() {
-  if (pollId != null) {
-    window.clearInterval(pollId);
-    pollId = null;
-  }
-}
-
 async function play() {
   error.value = null;
-  if (isPlaying.value) {
+  if (playback.isPlaying) {
     await stop();
     return;
   }
-
   try {
     Tone.getDestination().volume.value = Tone.gainToDb(volume.value);
-    const bytes = await exportMidi();
-    await playMidiBytes(bytes);
-    isPlaying.value = true;
-    clearPoll();
-    pollId = window.setInterval(() => {
-      if (playbackState() === 'stopped') {
-        isPlaying.value = false;
-        clearPoll();
-      }
-    }, 250);
+    await compStore.play();
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
-    isPlaying.value = false;
   }
 }
 
 async function stop() {
-  await stopPlayback();
-  clearPoll();
-  isPlaying.value = false;
+  await compStore.stop();
 }
 
 function onVolumeInput(e: Event) {
@@ -56,6 +35,13 @@ function onVolumeInput(e: Event) {
   Tone.getDestination().volume.value = Tone.gainToDb(val);
 }
 
+watch(
+  () => playback.isPlaying,
+  (playing) => {
+    compStore.playing = playing;
+  },
+);
+
 onUnmounted(() => {
   void stop();
 });
@@ -63,13 +49,13 @@ onUnmounted(() => {
 
 <template>
   <div class="player-panel">
-    <h3>Playback</h3>
+    <h3>{{ t('playback.title') }}</h3>
     <div class="controls">
       <button class="transport" :disabled="!compStore.summary" @click="play">
-        {{ isPlaying ? 'Stop' : 'Play' }}
+        {{ playback.isPlaying ? t('playback.stop') : t('playback.play') }}
       </button>
       <label class="volume">
-        Vol
+        {{ t('playback.volume') }}
         <input
           type="range"
           min="0"
@@ -81,38 +67,38 @@ onUnmounted(() => {
         {{ Math.round(volume * 100) }}%
       </label>
     </div>
-    <p v-if="!compStore.summary" class="hint">Generate a composition to enable playback.</p>
+    <p v-if="!compStore.summary" class="hint">{{ t('playback.hint') }}</p>
     <p v-if="error" class="error">{{ error }}</p>
   </div>
 </template>
 
 <style scoped>
 .player-panel {
-  padding: 0.75rem;
-  background: #161b22;
-  border: 1px solid #30363d;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-muted);
   border-radius: 6px;
 }
 
 .player-panel h3 {
-  margin: 0 0 0.75rem;
+  margin: 0 0 0.5rem;
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #8b949e;
+  color: var(--text-muted);
 }
 
 .controls {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.75rem;
   flex-wrap: wrap;
 }
 
 .transport {
-  padding: 0.4rem 1.25rem;
-  background: #238636;
-  border: 1px solid #238636;
+  padding: 0.35rem 1rem;
+  background: var(--success);
+  border: 1px solid var(--success);
   border-radius: 6px;
   color: #fff;
   font-weight: 600;
@@ -124,18 +110,14 @@ onUnmounted(() => {
   cursor: not-allowed;
 }
 
-.transport:not(:disabled):hover {
-  background: #2ea043;
-}
-
 .volume {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   font-size: 0.8125rem;
-  color: #8b949e;
+  color: var(--text-muted);
   flex: 1;
-  min-width: 140px;
+  min-width: 120px;
 }
 
 .volume input {
@@ -143,14 +125,14 @@ onUnmounted(() => {
 }
 
 .hint {
-  margin: 0.5rem 0 0;
+  margin: 0.35rem 0 0;
   font-size: 0.75rem;
-  color: #6e7681;
+  color: var(--text-faint);
 }
 
 .error {
-  margin: 0.5rem 0 0;
+  margin: 0.35rem 0 0;
   font-size: 0.75rem;
-  color: #f85149;
+  color: var(--error);
 }
 </style>

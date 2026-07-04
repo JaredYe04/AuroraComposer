@@ -169,3 +169,44 @@ export function visiblePitchRange(notes: PianoRollNote[], padding = 4): [number,
 export function pitchLabel(midi: number): string {
   return midi % 12 === 0 ? midiToName(midi) : '';
 }
+
+export function totalMeasuresFromNotes(notes: PianoRollNote[], fallback = 8): number {
+  if (notes.length === 0) return fallback;
+  return Math.max(fallback, ...notes.map((n) => n.startMeasure));
+}
+
+export function globalBeatToPosition(
+  globalBeat: number,
+  beatsPerMeasure: number,
+): { measure: number; beat: number } {
+  const measure = Math.floor(globalBeat / beatsPerMeasure) + 1;
+  const beat = globalBeat % beatsPerMeasure;
+  return { measure, beat };
+}
+
+export function globalBeatToX(
+  globalBeat: number,
+  beatsPerMeasure: number,
+  zoom: number,
+  scrollX: number,
+  keyWidth = 0,
+): number {
+  const { measure, beat } = globalBeatToPosition(globalBeat, beatsPerMeasure);
+  return beatToX(measure, beat, beatsPerMeasure, zoom, scrollX) + keyWidth;
+}
+
+export function xToGlobalBeat(
+  x: number,
+  keyWidth: number,
+  beatsPerMeasure: number,
+  zoom: number,
+  scrollX: number,
+  totalGlobalBeats: number,
+): number {
+  const gridX = Math.max(0, x - keyWidth);
+  const measure = xToMeasure(gridX, zoom, scrollX);
+  const measureStartX = measureToX(measure, zoom, scrollX);
+  const beatInMeasure = ((gridX - measureStartX) / zoom) * beatsPerMeasure;
+  const global = (measure - 1) * beatsPerMeasure + beatInMeasure;
+  return Math.max(0, Math.min(totalGlobalBeats, global));
+}

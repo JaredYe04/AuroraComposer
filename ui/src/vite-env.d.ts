@@ -5,3 +5,7 @@ declare module '*.vue' {
   const component: DefineComponent<object, object, unknown>;
   export default component;
 }
+
+declare module 'abcjs';
+declare module 'verovio/wasm';
+declare module 'verovio/esm';

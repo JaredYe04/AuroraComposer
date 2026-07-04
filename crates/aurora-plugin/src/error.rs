@@ -13,6 +13,8 @@ pub enum PluginError {
     ApplyFailed(String),
     #[error("plugin not found: {0}")]
     NotFound(String),
+    #[error("io error: {0}")]
+    Io(String),
     #[error("style preset not found: {0}")]
     PresetNotFound(String),
     #[error("sandbox violation: {0}")]

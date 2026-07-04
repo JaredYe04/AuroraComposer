@@ -140,7 +140,13 @@ impl ConstraintEvaluator {
 
 fn rule_active(rule: &HardRule, params: &ParameterBundle) -> bool {
     let id = rule.meta.id.as_str();
-    if id == "CONT-001" || id == "CONT-002" || id == "CP-PAR-001" || id == "CP-PAR-002" {
+    if id == "CONT-001"
+        || id == "CONT-002"
+        || id == "CP-PAR-001"
+        || id == "CP-PAR-002"
+        || id.starts_with("CP-PAR-")
+        || (id.starts_with("CP-") && rule.meta.category == crate::rule::RuleCategory::Counterpoint)
+    {
         return params.counterpoint_strictness() >= 0.8;
     }
     if id == "HARM-050" {
@@ -189,7 +195,10 @@ mod tests {
         let bundle = evaluator.make_context(&snapshot, &out_patch, VoiceRole::Melody, 0);
         let err = evaluator.check(&bundle.context()).unwrap_err();
         assert!(
-            matches!(err.rule_id.as_str(), "REG-001" | "VL-RNG-001" | "CP-058"),
+            matches!(
+                err.rule_id.as_str(),
+                "REG-001" | "VL-RNG-001" | "CP-058" | "ORCH-001"
+            ),
             "expected register rule, got {}",
             err.rule_id
         );

@@ -10,7 +10,8 @@ use crate::events::Event;
 use crate::nodes::{
     Composition, HarmonySlot, Measure, MeasureVoice, Movement, Phrase, Section, VoiceId,
 };
-use crate::provenance::{PatchId, ProvenanceAgent};
+use crate::provenance::{PatchId, PipelineStageId, ProvenanceAgent, ProvenanceSource};
+use crate::types::Pitch;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PatchRecord {
@@ -88,9 +89,12 @@ fn apply_op(comp: &mut Composition, op: &PatchOp) -> Result<(), AuroraError> {
         } => insert_node(comp, *parent, *index, node),
         PatchOp::DeleteNode { node_id } => delete_node(comp, *node_id),
         PatchOp::ReplaceNode { node_id, node } => replace_node(comp, *node_id, node),
-        PatchOp::MoveNode { .. } | PatchOp::UpdateField { .. } => Err(AuroraError::PatchFailed(
-            "MoveNode and UpdateField are not yet implemented".into(),
+        PatchOp::MoveNode { .. } => Err(AuroraError::PatchFailed(
+            "MoveNode is not yet implemented".into(),
         )),
+        PatchOp::UpdateField { node_id, path, value } => {
+            update_field(comp, *node_id, path, value)
+        }
     }
 }
 
@@ -309,12 +313,81 @@ fn voice_index(comp: &Composition, measure_id: NodeId, voice_id: VoiceId) -> Res
     )))
 }
 
+fn update_field(
+    comp: &mut Composition,
+    node_id: NodeId,
+    path: &FieldPath,
+    value: &Value,
+) -> Result<(), AuroraError> {
+    if path.0 == ["pitch", "midi"] {
+        let midi = value
+            .as_u64()
+            .and_then(|v| u8::try_from(v).ok())
+            .ok_or_else(|| AuroraError::PatchFailed("pitch.midi must be u8".into()))?;
+        return set_note_midi(comp, node_id, midi, false);
+    }
+    Err(AuroraError::PatchFailed(format!(
+        "unsupported field path {:?}",
+        path.0
+    )))
+}
+
+fn set_note_midi(
+    comp: &mut Composition,
+    node_id: NodeId,
+    new_midi: u8,
+    manual_provenance: bool,
+) -> Result<(), AuroraError> {
+    for movement in &mut comp.movements {
+        for section in &mut movement.sections {
+            for phrase in &mut section.phrases {
+                for measure in &mut phrase.measures {
+                    for mv in &mut measure.voices {
+                        for event in &mut mv.events {
+                            if let Event::Note(note) = event {
+                                if note.base.id == node_id {
+                                    note.pitch = Pitch::from_midi(new_midi);
+                                    if manual_provenance {
+                                        note.base.provenance.source = ProvenanceSource::ManualEdit;
+                                        note.base.provenance.stage = Some(PipelineStageId::Manual);
+                                        note.base.provenance.agent =
+                                            ProvenanceAgent::User { user_id: None };
+                                        note.base.provenance.explanation = Some(format!(
+                                            "Pitch edited to MIDI {new_midi}"
+                                        ));
+                                    }
+                                    return Ok(());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Err(AuroraError::PatchFailed(format!(
+        "note {} not found",
+        node_id.index
+    )))
+}
+
+/// Change a note's MIDI pitch by [`NodeId`], recording [`ProvenanceSource::ManualEdit`].
+pub fn patch_update_note_pitch(
+    comp: &Composition,
+    node_id: NodeId,
+    new_midi: u8,
+) -> Result<Composition, AuroraError> {
+    let mut updated = comp.clone();
+    set_note_midi(&mut updated, node_id, new_midi, true)?;
+    Ok(updated)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::builder::CompositionBuilder;
     use crate::events::{Event, NoteEvent, TieSpec};
-    use crate::provenance::{PipelineStageId, Provenance};
+    use crate::provenance::{PipelineStageId, Provenance, ProvenanceSource};
     use crate::types::{BeatOffset, NoteType, Pitch, WrittenDuration};
 
     fn sample_note(id: u64) -> Event {
@@ -371,5 +444,22 @@ mod tests {
             description: "bad".into(),
         };
         assert!(apply_patch(&comp, &patch).is_err());
+    }
+
+    #[test]
+    fn patch_update_note_pitch_sets_manual_provenance() {
+        let comp = CompositionBuilder::new().one_measure().build();
+        let note_id = NodeId::new(100, 0);
+        let measure_id = comp.movements[0].sections[0].phrases[0].measures[0].id;
+        let with_note =
+            patch_insert_event(&comp, measure_id, VoiceId(0), sample_note(100)).unwrap();
+        let updated = patch_update_note_pitch(&with_note, note_id, 72).unwrap();
+        let event = &updated.movements[0].sections[0].phrases[0].measures[0].voices[0].events[0];
+        if let Event::Note(note) = event {
+            assert_eq!(note.pitch.midi, 72);
+            assert_eq!(note.base.provenance.source, ProvenanceSource::ManualEdit);
+        } else {
+            panic!("expected note event");
+        }
     }
 }

@@ -11,7 +11,7 @@ pub use abc::{export_abc, abc_voice_count_warning, AbcExportConfig, AbcExportMod
 pub use ir::{project_ast_to_ir, MusicIr, DEFAULT_PPQ};
 pub use midi::{export_midi, export_midi_to_file, MidiExportConfig, SmfFormat};
 pub use musicxml::{export_musicxml, MusicXmlExportConfig, MusicXmlProfile};
-pub use pdf::{export_svg_preview, SvgPreviewResult};
+pub use pdf::{export_pdf_bytes, export_svg_preview, SvgPreviewResult};
 
 use aurora_ast::Composition;
 use aurora_core::ExportError;
@@ -45,5 +45,10 @@ impl ExportPipeline {
     pub fn to_svg_preview(comp: &Composition) -> Result<SvgPreviewResult, ExportError> {
         let ir = project_ast_to_ir(comp, DEFAULT_PPQ)?;
         export_svg_preview(comp, &ir)
+    }
+
+    pub fn to_pdf_bytes(comp: &Composition) -> Result<Vec<u8>, ExportError> {
+        let ir = project_ast_to_ir(comp, DEFAULT_PPQ)?;
+        export_pdf_bytes(comp, &ir)
     }
 }

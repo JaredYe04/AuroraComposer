@@ -40,6 +40,72 @@ pub fn export_svg_preview(
     })
 }
 
+/// Placeholder PDF bytes: valid PDF header wrapping SVG preview content.
+///
+/// Production engraving should use Verovio WASM on the frontend or MuseScore CLI.
+pub fn export_pdf_bytes(comp: &Composition, ir: &MusicIr) -> Result<Vec<u8>, ExportError> {
+    let preview = export_svg_preview(comp, ir)?;
+    Ok(build_placeholder_pdf(&preview.svg, &preview.musicxml))
+}
+
+/// Minimal PDF 1.4 document embedding SVG as a comment stream (placeholder for Verovio).
+fn build_placeholder_pdf(svg: &str, musicxml: &str) -> Vec<u8> {
+    let title = "Aurora Composer Score Preview";
+    let stream_body = format!(
+        "BT /F1 12 Tf 50 750 Td ({title}) Tj ET\n\
+         % SVG preview ({svg_len} bytes)\n\
+         % MusicXML ({xml_len} bytes) — render with Verovio for engraving\n",
+        title = escape_pdf_text(title),
+        svg_len = svg.len(),
+        xml_len = musicxml.len(),
+    );
+
+    let mut objects = Vec::new();
+    objects.push(format!("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"));
+    objects.push(format!(
+        "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+    ));
+    objects.push(format!(
+        "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] \
+         /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n"
+    ));
+    objects.push(format!(
+        "4 0 obj\n<< /Length {} >>\nstream\n{stream_body}endstream\nendobj\n",
+        stream_body.len()
+    ));
+    objects.push(
+        "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n".to_string(),
+    );
+
+    let mut pdf = Vec::new();
+    pdf.extend_from_slice(b"%PDF-1.4\n");
+    let mut offsets = vec![0usize];
+    for obj in &objects {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(obj.as_bytes());
+    }
+    let xref_start = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n", objects.len() + 1).as_bytes());
+    pdf.extend_from_slice(b"0000000000 65535 f \n");
+    for offset in offsets.iter().skip(1) {
+        pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .as_bytes(),
+    );
+    pdf
+}
+
+fn escape_pdf_text(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('(', "\\(")
+        .replace(')', "\\)")
+}
+
 fn render_svg_from_ir(comp: &Composition, ir: &MusicIr) -> String {
     let width = 820.0;
     let staff_height = 80.0;
@@ -146,5 +212,14 @@ mod tests {
         assert!(result.svg.contains("<ellipse"));
         assert!(result.musicxml.contains("score-partwise"));
         assert!(result.pdf_note.contains("Verovio"));
+    }
+
+    #[test]
+    fn pdf_bytes_has_valid_header() {
+        let comp = sample_composition();
+        let ir = project_ast_to_ir(&comp, DEFAULT_PPQ).unwrap();
+        let bytes = export_pdf_bytes(&comp, &ir).unwrap();
+        assert!(bytes.starts_with(b"%PDF-1.4"));
+        assert!(bytes.ends_with(b"%%EOF\n") || bytes.ends_with(b"%%EOF"));
     }
 }

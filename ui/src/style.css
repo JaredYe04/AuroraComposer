@@ -1,5 +1,58 @@
 :root {
   box-sizing: border-box;
+  color-scheme: dark;
+
+  --bg-app: #0f1419;
+  --bg-panel: #161b22;
+  --bg-panel-elevated: #1c2128;
+  --bg-input: #0d1117;
+  --key-bg: #161b22;
+  --text-primary: #e6edf3;
+  --text-muted: #8b949e;
+  --text-faint: #6e7681;
+  --border-muted: #30363d;
+  --border-subtle: #21262d;
+  --accent: #58a6ff;
+  --accent-soft: #388bfd26;
+  --playhead: #f85149;
+  --success: #238636;
+  --error: #f85149;
+  --badge: #8957e5;
+  --scrollbar-track: #21262d;
+  --scrollbar-thumb: #484f58;
+  --tooltip-bg: #1c2128;
+  --shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --score-paper: #ffffff;
+  --score-ink: #1a1a1a;
+  --panel-bg: var(--bg-panel);
+}
+
+[data-theme='light'] {
+  color-scheme: light;
+
+  --bg-app: #f0f2f5;
+  --bg-panel: #ffffff;
+  --bg-panel-elevated: #f6f8fa;
+  --bg-input: #ffffff;
+  --key-bg: #eaeef2;
+  --text-primary: #1f2328;
+  --text-muted: #656d76;
+  --text-faint: #8c959f;
+  --border-muted: #d0d7de;
+  --border-subtle: #eaeef2;
+  --accent: #0969da;
+  --accent-soft: #0969da1a;
+  --playhead: #cf222e;
+  --success: #1a7f37;
+  --error: #cf222e;
+  --badge: #8250df;
+  --scrollbar-track: #eaeef2;
+  --scrollbar-thumb: #afb8c1;
+  --tooltip-bg: #ffffff;
+  --shadow: 0 4px 12px rgba(31, 35, 40, 0.12);
+  --score-paper: #ffffff;
+  --score-ink: #1a1a1a;
+  --panel-bg: var(--bg-panel);
 }
 
 *,
@@ -8,6 +61,64 @@
   box-sizing: inherit;
 }
 
-body {
+html,
+body,
+#app {
+  height: 100%;
   margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+/* ABC score rendering — force dark ink on paper background */
+.score-pane :deep(svg) {
+  color: var(--score-ink);
+}
+
+.score-pane :deep(text),
+.score-pane :deep(tspan) {
+  fill: var(--score-ink) !important;
+}
+
+.score-pane :deep(path),
+.score-pane :deep(line),
+.score-pane :deep(rect:not([fill='none'])) {
+  stroke: var(--score-ink);
+}
+
+.score-pane :deep(.abcjs-staff),
+.score-pane :deep(.abcjs-note) {
+  fill: var(--score-ink);
+  stroke: var(--score-ink);
+}
+
+/* Thin styled scrollbars for inner panels only */
+.panel-scroll {
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+.panel-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.panel-scroll::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 3px;
+}
+
+.panel-scroll::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+
+.panel-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
 }

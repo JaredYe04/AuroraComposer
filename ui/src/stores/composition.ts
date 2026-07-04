@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { ref, toValue } from 'vue';
 import {
+  applyNotePatch,
   exportAbc,
   exportMidi,
   exportMusicXml,
@@ -8,20 +9,23 @@ import {
   generateComposition,
   getComposition,
   getTimeline,
+  loadProject,
   onJobComplete,
   onJobProgress,
 } from '@/services/tauri';
-import { playMidiBytes, stopPlayback, playbackState } from '@/services/player';
+import { playMidiBytes, stopPlayback } from '@/services/player';
 import type {
   Composition,
   CompositionSummary,
   JobCompleteEvent,
   JobProgressEvent,
+  NodeId,
   PianoRollNote,
   TimelineModel,
 } from '@/types/aurora';
 import { extractPianoRollNotes } from '@/utils/pianoRoll';
 import { useParameterStore } from './parameters';
+import { usePlaybackStore } from './playback';
 
 export const useCompositionStore = defineStore('composition', () => {
   const summary = ref<CompositionSummary | null>(null);
@@ -70,7 +74,7 @@ export const useCompositionStore = defineStore('composition', () => {
     progress.value = null;
     try {
       await subscribeEvents();
-      summary.value = await generateComposition(paramStore.snapshot);
+      summary.value = await generateComposition(toValue(paramStore.snapshot));
       await loadComposition();
     } catch (e) {
       error.value = e instanceof Error ? e.message : String(e);
@@ -133,26 +137,61 @@ export const useCompositionStore = defineStore('composition', () => {
   }
 
   async function play() {
+    const playback = usePlaybackStore();
     try {
       error.value = null;
       const bytes = await exportMidi();
+      if (summary.value) {
+        playback.setTimelineContext(summary.value.bars, summary.value.tempo_bpm);
+      }
+      const duration = await playMidiBytes(bytes);
       playing.value = true;
-      await playMidiBytes(bytes);
-      const poll = window.setInterval(() => {
-        if (playbackState() === 'stopped') {
-          playing.value = false;
-          window.clearInterval(poll);
-        }
-      }, 250);
+      playback.onPlayStart(summary.value?.tempo_bpm ?? 120, duration);
     } catch (e) {
       playing.value = false;
+      playback.onPlayStop();
       error.value = e instanceof Error ? e.message : String(e);
     }
   }
 
   async function stop() {
+    const playback = usePlaybackStore();
     await stopPlayback();
+    playback.onPlayStop();
     playing.value = false;
+  }
+
+  async function patchNote(nodeId: NodeId, pitchMidi: number) {
+    try {
+      error.value = null;
+      summary.value = await applyNotePatch(nodeId, pitchMidi);
+      await loadComposition();
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function loadFromProject(path: string) {
+    try {
+      error.value = null;
+      summary.value = await loadProject(path);
+      await loadComposition();
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  function clearAfterNew() {
+    summary.value = null;
+    composition.value = null;
+    timeline.value = null;
+    pianoRollNotes.value = [];
+    progress.value = null;
+    error.value = null;
+    lastAbc.value = null;
+    lastSvgPreview.value = null;
+    playing.value = false;
+    usePlaybackStore().onPlayStop();
   }
 
   return {
@@ -174,5 +213,8 @@ export const useCompositionStore = defineStore('composition', () => {
     loadSvgPreview,
     play,
     stop,
+    patchNote,
+    loadFromProject,
+    clearAfterNew,
   };
 });

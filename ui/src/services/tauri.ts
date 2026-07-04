@@ -4,12 +4,14 @@ import type {
   Composition,
   CompositionSummary,
   EventLocator,
+  NodeId,
   Provenance,
   ProvenanceChain,
   TimelineModel,
   UiParameterSnapshot,
   JobProgressEvent,
   JobCompleteEvent,
+  PluginInfo,
 } from '@/types/aurora';
 
 export async function getParameters(): Promise<UiParameterSnapshot> {
@@ -58,6 +60,40 @@ export async function exportAbc(): Promise<string> {
 
 export async function exportSvgPreview(): Promise<string> {
   return invoke<string>('export_svg_preview');
+}
+
+export async function applyNotePatch(
+  nodeId: NodeId,
+  pitchMidi: number,
+): Promise<CompositionSummary> {
+  return invoke<CompositionSummary>('apply_note_patch', {
+    node_id: nodeId,
+    new_midi: pitchMidi,
+  });
+}
+
+export async function saveProject(path: string): Promise<void> {
+  return invoke<void>('save_project', { path });
+}
+
+export async function loadProject(path: string): Promise<CompositionSummary> {
+  return invoke<CompositionSummary>('load_project', { path });
+}
+
+export async function newProject(): Promise<void> {
+  return invoke<void>('new_project');
+}
+
+export async function exportPdfBytes(): Promise<number[]> {
+  return invoke<number[]>('export_pdf_bytes');
+}
+
+export async function listWasmPlugins(): Promise<PluginInfo[]> {
+  return invoke<PluginInfo[]>('list_wasm_plugins');
+}
+
+export async function registerWasmPlugin(path: string): Promise<void> {
+  return invoke<void>('register_wasm_plugin', { path });
 }
 
 export function onJobProgress(

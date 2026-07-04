@@ -34,6 +34,32 @@ pub struct PluginDescriptor {
     pub load_path: PathBuf,
 }
 
+/// Serializable plugin summary for Tauri IPC (`list_wasm_plugins`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PluginInfo {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub plugin_type: PluginType,
+    pub execution_tier: String,
+    pub state: PluginState,
+    pub load_path: PathBuf,
+}
+
+impl From<&PluginDescriptor> for PluginInfo {
+    fn from(d: &PluginDescriptor) -> Self {
+        Self {
+            id: d.manifest.id.clone(),
+            name: d.manifest.name.clone(),
+            version: d.manifest.version.clone(),
+            plugin_type: d.manifest.plugin_type,
+            execution_tier: d.manifest.execution_tier.clone(),
+            state: d.state,
+            load_path: d.load_path.clone(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PluginState {
     Discovered,

@@ -20,18 +20,23 @@ export const useParameterStore = defineStore('parameters', () => {
   const snapshot = ref<UiParameterSnapshot>(defaultParams());
   const loading = ref(false);
 
+  function mergeDefaults(partial: Partial<UiParameterSnapshot>): UiParameterSnapshot {
+    return { ...defaultParams(), ...partial };
+  }
+
   async function load() {
     loading.value = true;
     try {
-      snapshot.value = await getParameters();
+      const fromBackend = await getParameters();
+      snapshot.value = mergeDefaults(fromBackend);
     } finally {
       loading.value = false;
     }
   }
 
   async function setParameters(partial: Partial<UiParameterSnapshot>) {
-    const next = { ...snapshot.value, ...partial };
-    snapshot.value = await setParamsCmd(next);
+    const next = mergeDefaults({ ...snapshot.value, ...partial });
+    snapshot.value = mergeDefaults(await setParamsCmd(next));
   }
 
   function reset() {
