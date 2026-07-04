@@ -1,0 +1,20 @@
+[package]
+name = "aurora-export"
+description = "Aurora Composer IR projection and export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+aurora-core = { workspace = true }
+aurora-ast = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+midly = "0.5"
+quick-xml = { version = "0.37", features = ["serialize"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }

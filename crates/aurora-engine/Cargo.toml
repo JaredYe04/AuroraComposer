@@ -1,0 +1,23 @@
+[package]
+name = "aurora-engine"
+description = "Aurora Composer generation pipeline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+aurora-core = { workspace = true }
+aurora-ast = { workspace = true }
+aurora-rules = { workspace = true }
+aurora-plugin = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+rayon = { workspace = true }
+tracing = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -1,0 +1,12 @@
+{
+  "$schema": "../ui/node_modules/@tauri-apps/cli/config.schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for Aurora Composer prototype",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:event:allow-emit",
+    "core:event:allow-listen"
+  ]
+}

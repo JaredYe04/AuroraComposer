@@ -1,0 +1,234 @@
+mod projection;
+mod state;
+
+use aurora_ast::{Composition, Event};
+use projection::{
+    build_timeline, resolve_event_provenance, resolve_provenance_chain, EventLocator,
+    ProvenanceChain, TimelineModel,
+};
+use aurora_core::{CompositionSummary, ParameterBundle, UiParameterSnapshot};
+use aurora_engine::{EngineError, PipelineOrchestrator};
+use aurora_export::{AbcExportConfig, ExportPipeline, MidiExportConfig, MusicXmlExportConfig};
+use aurora_ast::Provenance;
+use state::AppState;
+use tauri::{AppHandle, Emitter, State};
+use uuid::Uuid;
+
+#[derive(Clone, serde::Serialize)]
+struct JobProgressEvent {
+    job_id: String,
+    stage_name: String,
+    stage_index: u8,
+    percent: f32,
+    message: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct JobCompleteEvent {
+    job_id: String,
+    summary: CompositionSummary,
+}
+
+fn composition_summary(comp: &Composition) -> CompositionSummary {
+    let bars = comp
+        .movements
+        .iter()
+        .flat_map(|m| &m.sections)
+        .flat_map(|s| &s.phrases)
+        .flat_map(|p| &p.measures)
+        .count() as u16;
+    let note_count = comp
+        .movements
+        .iter()
+        .flat_map(|m| &m.sections)
+        .flat_map(|s| &s.phrases)
+        .flat_map(|p| &p.measures)
+        .flat_map(|m| &m.voices)
+        .flat_map(|v| &v.events)
+        .filter(|e| matches!(e, Event::Note(_) | Event::Chord(_)))
+        .count() as u32;
+
+    CompositionSummary {
+        title: comp.metadata.title.clone(),
+        bars,
+        voice_count: comp.voice_registry.voices.len() as u16,
+        note_count,
+        tempo_bpm: comp.global.tempo_map.default_bpm,
+        key: comp.global.key_map.default.tonic.pc,
+    }
+}
+
+#[tauri::command]
+fn get_parameters(state: State<'_, AppState>) -> Result<UiParameterSnapshot, String> {
+    Ok(UiParameterSnapshot::from(&*state.parameters.lock().map_err(|e| e.to_string())?))
+}
+
+#[tauri::command]
+fn set_parameters(
+    parameters: UiParameterSnapshot,
+    state: State<'_, AppState>,
+) -> Result<UiParameterSnapshot, String> {
+    let bundle: ParameterBundle = parameters.clone().into();
+    let mut stored = state.parameters.lock().map_err(|e| e.to_string())?;
+    *stored = bundle;
+    Ok(UiParameterSnapshot::from(&*stored))
+}
+
+#[tauri::command]
+async fn generate_composition(
+    params: UiParameterSnapshot,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<CompositionSummary, String> {
+    let bundle: ParameterBundle = params.into();
+    {
+        let mut stored = state.parameters.lock().map_err(|e| e.to_string())?;
+        *stored = bundle.clone();
+    }
+
+    let job_id = Uuid::new_v4().to_string();
+    let app_clone = app.clone();
+    let job_id_str = job_id.clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        PipelineOrchestrator::new()
+            .with_progress(Box::new({
+                let app = app_clone.clone();
+                let jid = job_id_str.clone();
+                move |p| {
+                    let _ = app.emit(
+                        "aurora://job-progress",
+                        JobProgressEvent {
+                            job_id: jid.clone(),
+                            stage_name: p.stage_name,
+                            stage_index: p.stage_index,
+                            percent: p.percent,
+                            message: p.message,
+                        },
+                    );
+                }
+            }))
+            .run(&bundle)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(engine_err)?;
+
+    let summary = composition_summary(&result);
+
+    {
+        let mut comp = state.composition.lock().map_err(|e| e.to_string())?;
+        *comp = Some(result);
+    }
+
+    let _ = app.emit(
+        "aurora://job-complete",
+        JobCompleteEvent {
+            job_id,
+            summary: summary.clone(),
+        },
+    );
+
+    Ok(summary)
+}
+
+fn engine_err(err: EngineError) -> String {
+    match err {
+        EngineError::Aurora(a) => a.to_string(),
+        EngineError::StageFailed { stage, message } => {
+            format!("Stage {stage} failed: {message}")
+        }
+    }
+}
+
+fn require_composition(state: &State<'_, AppState>) -> Result<Composition, String> {
+    state
+        .composition
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+        .ok_or_else(|| "No composition generated yet".to_string())
+}
+
+#[tauri::command]
+fn export_midi(state: State<'_, AppState>) -> Result<Vec<u8>, String> {
+    let comp = require_composition(&state)?;
+    ExportPipeline::to_midi(&comp, &MidiExportConfig::default()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn export_musicxml(state: State<'_, AppState>) -> Result<String, String> {
+    let comp = require_composition(&state)?;
+    ExportPipeline::to_musicxml(&comp, &MusicXmlExportConfig::default())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn export_abc(state: State<'_, AppState>) -> Result<String, String> {
+    let comp = require_composition(&state)?;
+    ExportPipeline::to_abc(&comp, &AbcExportConfig::default()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn export_svg_preview(state: State<'_, AppState>) -> Result<String, String> {
+    let comp = require_composition(&state)?;
+    ExportPipeline::to_svg_preview(&comp)
+        .map(|r| r.svg)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_composition(state: State<'_, AppState>) -> Result<Option<Composition>, String> {
+    Ok(state.composition.lock().map_err(|e| e.to_string())?.clone())
+}
+
+#[tauri::command]
+fn get_timeline(state: State<'_, AppState>) -> Result<Option<TimelineModel>, String> {
+    let comp = state
+        .composition
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+    Ok(comp.as_ref().map(build_timeline))
+}
+
+#[tauri::command]
+fn get_event_provenance(
+    locator: EventLocator,
+    state: State<'_, AppState>,
+) -> Result<Provenance, String> {
+    let comp = require_composition(&state)?;
+    resolve_event_provenance(&comp, &locator)
+        .ok_or_else(|| "Event not found".to_string())
+}
+
+#[tauri::command]
+fn get_provenance_chain(
+    locator: EventLocator,
+    state: State<'_, AppState>,
+) -> Result<ProvenanceChain, String> {
+    let comp = require_composition(&state)?;
+    resolve_provenance_chain(&comp, &locator)
+        .ok_or_else(|| "Event not found".to_string())
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .manage(AppState::default())
+        .invoke_handler(tauri::generate_handler![
+            get_parameters,
+            set_parameters,
+            generate_composition,
+            export_midi,
+            export_musicxml,
+            export_abc,
+            export_svg_preview,
+            get_composition,
+            get_timeline,
+            get_event_provenance,
+            get_provenance_chain,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running Aurora Composer");
+}

@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/aurora-core",
+    "crates/aurora-ast",
+    "crates/aurora-rules",
+    "crates/aurora-plugin",
+    "crates/aurora-engine",
+    "crates/aurora-export",
+    "src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Aurora Composer Contributors"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_cbor = "0.11"
+thiserror = "2"
+anyhow = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+rayon = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+aurora-core = { path = "crates/aurora-core" }
+aurora-ast = { path = "crates/aurora-ast" }
+aurora-rules = { path = "crates/aurora-rules" }
+aurora-plugin = { path = "crates/aurora-plugin" }
+aurora-engine = { path = "crates/aurora-engine" }
+aurora-export = { path = "crates/aurora-export" }
+
+[profile.release]
+lto = true
+codegen-units = 1

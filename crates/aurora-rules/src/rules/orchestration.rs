@@ -1,0 +1,53 @@
+//! Orchestration rules from `docs/03-theory/orchestration.md`.
+
+use super::helpers::{stub_hard, stub_soft};
+use super::implemented::*;
+use crate::rule::{HardRule, RuleCategory, SoftRule};
+
+pub fn hard_rules() -> Vec<HardRule> {
+    let mut rules = Vec::new();
+    rules.push(orch_001_hard());
+    rules.push(stub_hard("ORCH-003", "ORCH-003", RuleCategory::Orchestration));
+    rules
+}
+
+pub fn soft_rules() -> Vec<SoftRule> {
+    let mut rules = Vec::new();
+    rules.push(orch_002_soft());
+    rules.push(stub_soft("ORCH-004", "ORCH-004", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-005", "ORCH-005", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-006", "ORCH-006", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-007", "ORCH-007", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-008", "ORCH-008", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-009", "ORCH-009", RuleCategory::Orchestration));
+    rules.push(orch_010_soft());
+    rules.push(stub_soft("ORCH-DBL-001", "ORCH-DBL-001", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-DBL-002", "ORCH-DBL-002", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-DBL-003", "ORCH-DBL-003", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-DBL-004", "ORCH-DBL-004", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-DBL-005", "ORCH-DBL-005", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-DBL-006", "ORCH-DBL-006", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-DBL-007", "ORCH-DBL-007", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-DBL-008", "ORCH-DBL-008", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-RNG-001", "ORCH-RNG-001", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-RNG-002", "ORCH-RNG-002", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-RNG-003", "ORCH-RNG-003", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-RNG-004", "ORCH-RNG-004", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-RNG-005", "ORCH-RNG-005", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-RNG-006", "ORCH-RNG-006", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-RNG-007", "ORCH-RNG-007", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-RNG-008", "ORCH-RNG-008", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-RNG-009", "ORCH-RNG-009", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-RNG-010", "ORCH-RNG-010", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-TEX-001", "ORCH-TEX-001", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-TEX-002", "ORCH-TEX-002", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-TEX-003", "ORCH-TEX-003", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-TEX-004", "ORCH-TEX-004", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-TEX-005", "ORCH-TEX-005", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-TEX-006", "ORCH-TEX-006", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-TEX-007", "ORCH-TEX-007", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-TEX-008", "ORCH-TEX-008", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-TEX-009", "ORCH-TEX-009", RuleCategory::Orchestration));
+    rules.push(stub_soft("ORCH-TEX-010", "ORCH-TEX-010", RuleCategory::Orchestration));
+    rules
+}

@@ -1,0 +1,30 @@
+[package]
+name = "aurora-composer"
+description = "Aurora Composer desktop shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+name = "aurora_composer_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+aurora-core = { workspace = true }
+aurora-ast = { workspace = true }
+aurora-engine = { workspace = true }
+aurora-export = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+tauri = { version = "2", features = [] }
+uuid = { workspace = true }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
