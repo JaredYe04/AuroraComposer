@@ -8,15 +8,24 @@ pub fn inversion_index(step: usize, chord: &ChordSymbol, prev_bass_pc: Option<u8
     if pcs.len() < 2 {
         return 0;
     }
-    let base = (step / 4 + chord.root.pc as usize) % pcs.len().min(3);
+    if step % 4 == 0 {
+        return 0;
+    }
     if let Some(prev_bass) = prev_bass_pc {
+        let mut best = 0usize;
+        let mut best_dist = u8::MAX;
         for (i, &pc) in pcs.iter().enumerate().take(3) {
-            if pc == prev_bass {
-                return i % pcs.len();
+            let up = (pc + 12 - prev_bass) % 12;
+            let down = (prev_bass + 12 - pc) % 12;
+            let dist = up.min(down);
+            if dist < best_dist {
+                best_dist = dist;
+                best = i;
             }
         }
+        return best % pcs.len();
     }
-    base
+    0
 }
 
 /// Build MIDI voicing with optional inversion and slash bass.

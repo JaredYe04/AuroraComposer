@@ -322,6 +322,8 @@ impl Default for TextureParams {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RhythmParams {
+    /// Global tempo in BPM (used by structure/tempo map).
+    pub tempo_bpm: f64,
     pub density: f32,
     pub syncopation: f32,
     pub subdivision: u8,
@@ -333,6 +335,7 @@ pub struct RhythmParams {
 impl Default for RhythmParams {
     fn default() -> Self {
         Self {
+            tempo_bpm: 120.0,
             density: 0.5,
             syncopation: 0.25,
             subdivision: 4,
@@ -389,8 +392,9 @@ impl Default for RegisterParams {
         Self {
             melody_register_min: 60,
             melody_register_max: 84,
-            bass_register_min: 36,
-            bass_register_max: 60,
+            // Lowered by ~2 octaves so bass sits as true low foundation.
+            bass_register_min: 12,
+            bass_register_max: 36,
         }
     }
 }
@@ -480,6 +484,14 @@ pub fn sanitize_generation_bundle(bundle: &mut ParameterBundle) {
     if bundle.theme.theme_count <= 1 {
         let seed = bundle.search.seed.unwrap_or(42);
         bundle.theme.theme_count = 2 + ((seed % 3) as u8);
+    }
+
+    bundle.rhythm.tempo_bpm = bundle.rhythm.tempo_bpm.clamp(40.0, 220.0);
+    if bundle.register.bass_register_min > bundle.register.bass_register_max {
+        std::mem::swap(
+            &mut bundle.register.bass_register_min,
+            &mut bundle.register.bass_register_max,
+        );
     }
 }
 

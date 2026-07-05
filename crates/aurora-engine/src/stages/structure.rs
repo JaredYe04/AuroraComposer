@@ -10,7 +10,7 @@ use aurora_ast::nodes::{VoiceGroup, VoiceGroupId, VoiceGroupKind};
 
 use crate::progression::plan_key_changes;
 
-use super::common::{bass_voice_id, counterpoint_enabled, drums_voice_id, harmony_pad_enabled, harmony_pad_voice_id, accompaniment_enabled, accompaniment_voice_id, resolve_accompaniment_instrument};
+use super::common::{accompaniment_enabled, accompaniment_voice_id, bass_voice_id, counterpoint_enabled, drums_voice_id, harmony_pad_enabled, harmony_pad_voice_id, resolve_accompaniment_instrument, resolve_bass_instrument};
 use crate::progression::parse_mode;
 use aurora_core::NodeId;
 use aurora_ast::provenance::ProvenanceRoot;
@@ -22,7 +22,7 @@ pub fn plan_structure(state: &mut PipelineState, created_at: &str) -> Result<(),
     let bars = total_bars(&state.params);
     let beats = state.params.rhythm.time_signature_beats;
     let beat_type = state.params.rhythm.time_signature_beat_type;
-    let tempo = 120.0 + f64::from(state.emotion.tempo_delta_bpm);
+    let tempo = state.params.rhythm.tempo_bpm.clamp(40.0, 220.0);
 
     let tonic_pc = state.params.mode.key % 12;
     let mode = parse_mode(&state.params.mode.mode);
@@ -217,6 +217,7 @@ pub fn plan_structure(state: &mut PipelineState, created_at: &str) -> Result<(),
         });
     }
 
+    let (bass_gm, bass_name) = resolve_bass_instrument(&state.params.style.genre);
     registry_voices.push(VoiceDef {
         id: bass_id,
         name: "Bass".into(),
@@ -230,8 +231,8 @@ pub fn plan_structure(state: &mut PipelineState, created_at: &str) -> Result<(),
         midi_channel: if cp_enabled || accompaniment_enabled(state) { 3 } else { 2 },
         group: Some(VoiceGroupId(0)),
         instrument: InstrumentSpec {
-            gm_program: 32,
-            name: "Acoustic Bass".into(),
+            gm_program: bass_gm,
+            name: bass_name.into(),
             transposition: 0,
             clef: Clef::Bass,
             staff_lines: 5,

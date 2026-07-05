@@ -1,13 +1,13 @@
 //! Fully implemented critical rules (30+). Stubs reference these via category modules.
 
-use aurora_ast::{CadenceType, ChordQuality, Mode, VoiceRole};
+use aurora_ast::{CadenceType, ChordQuality, VoiceRole};
 
 use super::helpers::{
     chord_pitch_classes, contour_balance_eval, is_diatonic_in_key, is_minor_key,
     is_primary_dominant_chord, leading_tone_pc, melody_closure_eval, motif_similarity, on_grid,
     parallel_perfect, register_check,
 };
-use crate::eval_context::{BeatStrengthKind, EvaluationContext};
+use crate::eval_context::BeatStrengthKind;
 use crate::rule::{
     EvalCost, HardRule, Rule, RuleCategory, RuleId, RuleMode, RuleScope, SoftEvalOutcome, SoftRule,
 };
@@ -652,29 +652,62 @@ pub fn vl_mot_010_hard() -> HardRule {
             category: RuleCategory::VoiceLeading,
             mode: RuleMode::Hard,
             scope: RuleScope::EventPair,
-            citation: None,
+            citation: Some("Aldwell & Schachter, Ch. 8 — 7th resolves down".into()),
             cost: EvalCost::Low,
         },
-        when: None,
-        check: |_| true,
-        fail_reason: |_| "Chord 7th unresolved".into(),
+        when: Some(|ctx| {
+            // Only enforce at phrase boundaries or piece endings
+            ctx.prev_pitch().is_some() && ctx.candidate_pitch().is_some()
+                && (ctx.snapshot.is_piece_end_step
+                    || ctx.snapshot.phrase_end
+                    || ctx.snapshot.in_closure_zone)
+                && ctx.snapshot.current_chord.as_ref().is_some_and(|chord| {
+                    let seventh = (chord.root.pc + 10) % 12;
+                    ctx.prev_pitch().unwrap().midi % 12 == seventh
+                })
+        }),
+        check: |ctx| {
+            let prev = ctx.prev_pitch().unwrap();
+            let curr = ctx.candidate_pitch().unwrap();
+            let interval = curr.midi as i16 - prev.midi as i16;
+            interval == -1 || interval == -2
+        },
+        fail_reason: |_| "Chord 7th must resolve down by stepwise motion".into(),
     }
 }
 
-pub fn vl_mot_011_hard() -> HardRule {
-    HardRule {
+pub fn vl_mot_011_soft() -> SoftRule {
+    SoftRule {
         meta: Rule {
             id: RuleId::new("VL-MOT-011"),
-            name: "Leading tone resolves up to tonic".into(),
+            name: "Leading tone resolves up to tonic (soft)".into(),
             category: RuleCategory::VoiceLeading,
-            mode: RuleMode::Hard,
+            mode: RuleMode::Soft,
             scope: RuleScope::EventPair,
-            citation: None,
+            citation: Some("Kostka & Payne, Tonal Harmony — leading tone resolution".into()),
             cost: EvalCost::Low,
         },
-        when: None,
-        check: |_| true,
-        fail_reason: |_| "Leading tone unresolved".into(),
+        weight_key: Some("voice.resolution"),
+        when: Some(|ctx| {
+            ctx.prev_pitch().is_some() && ctx.candidate_pitch().is_some()
+        }),
+        evaluate: |ctx, _| {
+            let prev = ctx.prev_pitch().unwrap();
+            let curr = ctx.candidate_pitch().unwrap();
+            let leading = (ctx.snapshot.key.tonic.pc + 11) % 12;
+            let prev_is_leading = prev.midi % 12 == leading;
+            if prev_is_leading {
+                let tonic = ctx.snapshot.key.tonic.pc;
+                let resolved = curr.midi % 12 == tonic && curr.midi > prev.midi;
+                if resolved {
+                    SoftEvalOutcome { indicator: 1.0, is_penalty: false, reason: "Leading tone resolves up to tonic".into() }
+                } else {
+                    SoftEvalOutcome { indicator: 0.3, is_penalty: true, reason: "Leading tone should resolve up to tonic".into() }
+                }
+            } else {
+                SoftEvalOutcome { indicator: 0.0, is_penalty: false, reason: "Not a leading tone".into() }
+            }
+        },
     }
 }
 
@@ -1176,7 +1209,6 @@ pub fn harm_mel_001_soft() -> SoftRule {
                 && ctx.snapshot.current_chord.is_some()
         }),
         evaluate: |ctx, _| {
-            use crate::eval_context::PitchExt;
             use crate::melody_nct::{classify_melodic_nct, MelodicNctKind};
             let pitch = ctx.candidate_pitch().unwrap();
             let chord = ctx.snapshot.current_chord.as_ref().unwrap();
@@ -1185,15 +1217,15 @@ pub fn harm_mel_001_soft() -> SoftRule {
             let is_strong = ctx.is_strong_beat();
             let penalty = match nct {
                 MelodicNctKind::ChordTone => 0.0,
-                MelodicNctKind::DiatonicNeighbor if !is_strong => 0.12,
-                MelodicNctKind::DiatonicPassing if !is_strong => 0.20,
-                MelodicNctKind::ApproachTone if !is_strong => 0.28,
-                MelodicNctKind::ChromaticNeighbor => 0.70,
-                MelodicNctKind::ChromaticPassing => 0.80,
+                MelodicNctKind::DiatonicNeighbor if !is_strong => 0.18,
+                MelodicNctKind::DiatonicPassing if !is_strong => 0.28,
+                MelodicNctKind::ApproachTone if !is_strong => 0.35,
+                MelodicNctKind::ChromaticNeighbor => 0.88,
+                MelodicNctKind::ChromaticPassing => 0.95,
                 MelodicNctKind::Other if is_strong => 0.95,
-                MelodicNctKind::Other => 0.55,
+                MelodicNctKind::Other => 0.70,
                 _ if is_strong => 0.90,
-                _ => 0.45,
+                _ => 0.60,
             };
             if penalty < 0.2 {
                 SoftEvalOutcome {

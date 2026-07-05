@@ -67,8 +67,8 @@ export async function applyNotePatch(
   pitchMidi: number,
 ): Promise<CompositionSummary> {
   return invoke<CompositionSummary>('apply_note_patch', {
-    node_id: nodeId,
-    new_midi: pitchMidi,
+    nodeId,
+    newMidi: pitchMidi,
   });
 }
 

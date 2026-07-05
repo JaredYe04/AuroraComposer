@@ -10,7 +10,6 @@ pub fn hard_rules() -> Vec<HardRule> {
     rules.push(stub_hard("VL-DBL-003", "VL-DBL-003", RuleCategory::VoiceLeading));
     rules.push(stub_hard("VL-DBL-004", "VL-DBL-004", RuleCategory::VoiceLeading));
     rules.push(vl_mot_010_hard());
-    rules.push(vl_mot_011_hard());
     rules.push(vl_rng_001_hard());
     rules.push(vl_rng_002_hard());
     rules.push(stub_hard("VL-RNG-003", "VL-RNG-003", RuleCategory::VoiceLeading));
@@ -39,7 +38,7 @@ pub fn soft_rules() -> Vec<SoftRule> {
     rules.push(stub_soft("VL-MOT-007", "VL-MOT-007", RuleCategory::VoiceLeading));
     rules.push(stub_soft("VL-MOT-008", "VL-MOT-008", RuleCategory::VoiceLeading));
     rules.push(stub_soft("VL-MOT-009", "VL-MOT-009", RuleCategory::VoiceLeading));
-    rules.push(stub_soft("VL-MOT-012", "VL-MOT-012", RuleCategory::VoiceLeading));
+    rules.push(vl_mot_011_soft());
     rules.push(stub_soft("VL-MOT-013", "VL-MOT-013", RuleCategory::VoiceLeading));
     rules.push(stub_soft("VL-MOT-014", "VL-MOT-014", RuleCategory::VoiceLeading));
     rules.push(stub_soft("VL-MOT-015", "VL-MOT-015", RuleCategory::VoiceLeading));

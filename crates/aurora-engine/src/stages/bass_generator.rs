@@ -64,13 +64,13 @@ impl CandidateGenerator for BassCandidateGenerator {
             .unwrap_or(RuleNodeId::new(1, 0));
 
         let (min_midi, max_midi) = self.bass_register;
-        let root_midi = 36 + chord.root.pc;
-        let next_root = 36 + next_chord.root.pc;
+        let root_midi = 12 + chord.root.pc;
+        let next_root = 12 + next_chord.root.pc;
         let mut candidates = Vec::new();
 
         // Strong beat + chord change: root of current chord
         if beat == 0 || chord_changed {
-            for oct in 2..=4 {
+            for oct in 0..=2 {
                 let midi = oct * 12 + chord.root.pc;
                 if midi >= min_midi && midi <= max_midi {
                     candidates.push(make_patch(measure_id, beat, midi, "bass_root"));
@@ -112,7 +112,7 @@ impl CandidateGenerator for BassCandidateGenerator {
         }
 
         for pc in chord.voicing_pcs() {
-            for oct in 2..=4 {
+            for oct in 0..=2 {
                 let midi = oct * 12 + pc;
                 if midi >= min_midi && midi <= max_midi {
                     candidates.push(make_patch(measure_id, beat, midi, "bass_chord_tone"));

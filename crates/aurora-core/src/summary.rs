@@ -69,7 +69,7 @@ impl From<&ParameterBundle> for UiParameterSnapshot {
             style: p.style.genre.clone(),
             beam_width: p.search.beam_width,
             bars,
-            tempo_bpm: 120.0,
+            tempo_bpm: p.rhythm.tempo_bpm,
             emotion_valence: p.emotion.valence,
             emotion_arousal: p.emotion.arousal,
             harmony_complexity: p.harmony.complexity,
@@ -97,6 +97,7 @@ impl From<UiParameterSnapshot> for ParameterBundle {
         bundle.search.beam_width = ui.beam_width;
         bundle.form.section_lengths = vec![ui.bars];
         bundle.form.section_count = 1;
+        bundle.rhythm.tempo_bpm = ui.tempo_bpm;
         bundle.emotion.valence = ui.emotion_valence;
         bundle.emotion.arousal = ui.emotion_arousal;
         bundle.harmony.complexity = ui.harmony_complexity;

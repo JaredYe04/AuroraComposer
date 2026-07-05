@@ -16,6 +16,7 @@ import ScrollPanel from '@/components/ScrollPanel.vue';
 import ResizeHandle from '@/components/ResizeHandle.vue';
 import type { IconName } from '@/assets/icons';
 import { useI18n } from '@/composables/useI18n';
+import { GENERATION_PRESETS } from '@/presets/generationPresets';
 import { useCompositionStore } from '@/stores/composition';
 import { useParameterStore } from '@/stores/parameters';
 import { usePlaybackStore } from '@/stores/playback';
@@ -58,6 +59,7 @@ const accompanimentInstruments = [
   { value: 'strings', labelKey: 'params.accompanimentStrings' as const },
 ];
 const styles = ['classical', 'jazz', 'pop', 'ambient'];
+const presetOptions = GENERATION_PRESETS;
 
 const toolModes: PianoToolMode[] = ['pointer', 'box', 'brush', 'eraser', 'split'];
 
@@ -324,6 +326,16 @@ onUnmounted(() => {
                 <option v-for="s in styles" :key="s" :value="s">{{ s }}</option>
               </select>
             </label>
+            <label title="Select a style preset and auto-fill parameters">
+              Preset / 预设
+              <select
+                :value="paramStore.selectedPresetId"
+                @change="paramStore.applyPreset(($event.target as HTMLSelectElement).value)"
+              >
+                <option value="">Custom / 自定义</option>
+                <option v-for="p in presetOptions" :key="p.id" :value="p.id">{{ p.label }}</option>
+              </select>
+            </label>
             <label :title="t('params.barsHint')">
               {{ t('params.bars') }}: {{ paramStore.snapshot.bars ?? 8 }}
               <input
@@ -335,6 +347,21 @@ onUnmounted(() => {
                 @input="
                   paramStore.setParameters({
                     bars: Number(($event.target as HTMLInputElement).value),
+                  })
+                "
+              />
+            </label>
+            <label title="Global tempo in BPM">
+              BPM: {{ Math.round(paramStore.snapshot.tempo_bpm ?? 120) }}
+              <input
+                type="range"
+                min="40"
+                max="220"
+                step="1"
+                :value="paramStore.snapshot.tempo_bpm ?? 120"
+                @input="
+                  paramStore.setParameters({
+                    tempo_bpm: Number(($event.target as HTMLInputElement).value),
                   })
                 "
               />

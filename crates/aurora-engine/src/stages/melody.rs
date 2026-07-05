@@ -90,9 +90,29 @@ pub fn generate_melody(state: &mut PipelineState, created_at: &str) -> Result<()
         max_steps: u32::try_from(total_steps).unwrap_or(64),
     };
 
-    let result = engine
-        .run_beam(SearchState::initial(initial_snapshot), &generator, &terminal)
-        .map_err(|e| e.to_string())?;
+    let result = match engine.run_beam(SearchState::initial(initial_snapshot.clone()), &generator, &terminal) {
+        Ok(ok) => ok,
+        Err(_) => {
+            let mut relaxed_params = state.params.clone();
+            relaxed_params.search.beam_width = relaxed_params.search.beam_width.max(24);
+            relaxed_params.melody.tonal_conservatism =
+                (relaxed_params.melody.tonal_conservatism - 0.12).max(0.45);
+            let relaxed_t = relaxed_params.melody.tonal_conservatism;
+            let mut relaxed_generator = generator.clone();
+            relaxed_generator.chord_tone_bias = derived_chord_tone_bias(relaxed_t);
+            relaxed_generator.neighbor_bias = derived_neighbor_tone_bias(relaxed_t);
+            relaxed_generator.passing_bias = derived_passing_tone_bias(relaxed_t);
+            relaxed_generator.tonal_conservatism = relaxed_t;
+            relaxed_generator.motif_weight = relaxed_generator.motif_weight.min(0.45);
+            let relaxed_engine = BeamSearchEngine::from_bundle(
+                aurora_rules::prototype_rule_set(),
+                relaxed_params,
+            );
+            relaxed_engine
+                .run_beam(SearchState::initial(initial_snapshot), &relaxed_generator, &terminal)
+                .map_err(|e| e.to_string())?
+        }
+    };
 
     let pitches = &result.best_state.snapshot.melody_pitches;
     if pitches.len() != total_steps {
@@ -306,6 +326,47 @@ struct SubNote {
     velocity: u8,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum CadenceFormula {
+    Authentic,      // 7→1  (leading tone up to tonic)
+    HalfCadence,    // ends on V (dominant)
+    PlagalImplied,  // 4→1
+    Deceptive,      // 7→6
+}
+
+impl CadenceFormula {
+    fn penultimate_pcs(&self, tonic_pc: u8) -> Vec<u8> {
+        match self {
+            CadenceFormula::Authentic => {
+                vec![(tonic_pc + 11) % 12, (tonic_pc + 2) % 12]
+            }
+            CadenceFormula::HalfCadence => {
+                vec![(tonic_pc + 7) % 12]
+            }
+            CadenceFormula::PlagalImplied => {
+                vec![(tonic_pc + 5) % 12]
+            }
+            CadenceFormula::Deceptive => {
+                vec![(tonic_pc + 11) % 12, (tonic_pc + 9) % 12]
+            }
+        }
+    }
+
+    fn final_pcs(&self, tonic_pc: u8) -> Vec<u8> {
+        match self {
+            CadenceFormula::Authentic | CadenceFormula::PlagalImplied => {
+                vec![tonic_pc]
+            }
+            CadenceFormula::HalfCadence => {
+                vec![(tonic_pc + 7) % 12]
+            }
+            CadenceFormula::Deceptive => {
+                vec![(tonic_pc + 9) % 12]
+            }
+        }
+    }
+}
+
 fn build_motif_expected_grid(
     total_steps: usize,
     generator: &MelodyCandidateGenerator,
@@ -319,12 +380,99 @@ fn build_motif_expected_grid(
         .collect()
 }
 
-fn stepwise_passing_between(prev: u8, target: u8) -> Option<u8> {
-    match target as i16 - prev as i16 {
-        2 => Some(prev.saturating_add(1)),
-        -2 => Some(prev.saturating_sub(1)),
-        _ => None,
+fn fill_passing_tone(prev: u8, target: u8, conservative: bool) -> Option<u8> {
+    let diff = target as i16 - prev as i16;
+    let direction = diff.signum();
+    let abs_diff = diff.unsigned_abs();
+
+    match abs_diff {
+        2 => {
+            // Whole step: insert the middle note (diatonic passing)
+            Some((prev as i16 + direction) as u8)
+        }
+        1 => {
+            // Half step: already stepwise, no passing needed
+            None
+        }
+        3 | 4 | 5 if !conservative => {
+            // Third to fourth: insert one passing tone
+            Some((prev as i16 + direction * 2) as u8)
+        }
+        _ => {
+            // Larger leaps: do NOT insert passing tones
+            None
+        }
     }
+}
+
+fn single_quarter_note(midi: u8) -> Vec<SubNote> {
+    vec![SubNote {
+        offset_frac: 0.0,
+        note_type: NoteType::Quarter,
+        dots: 0,
+        midi,
+        velocity: 82,
+    }]
+}
+
+fn two_eighths_with_passing(midi: u8, _prev_midi: Option<u8>, passing: Option<u8>, _conservative: bool) -> Vec<SubNote> {
+    let second_midi = passing.unwrap_or(midi);
+    vec![
+        SubNote {
+            offset_frac: 0.0,
+            note_type: NoteType::Eighth,
+            dots: 0,
+            midi,
+            velocity: 84,
+        },
+        SubNote {
+            offset_frac: 0.5,
+            note_type: NoteType::Eighth,
+            dots: 0,
+            midi: second_midi,
+            velocity: if second_midi == midi { 70 } else { 72 },
+        },
+    ]
+}
+
+fn syncopated_with_passing(midi: u8, passing: Option<u8>) -> Vec<SubNote> {
+    let mut notes = vec![SubNote {
+        offset_frac: 0.25,
+        note_type: NoteType::Eighth,
+        dots: 0,
+        midi,
+        velocity: 80,
+    }];
+    if let Some(p) = passing {
+        notes.push(SubNote {
+            offset_frac: 0.75,
+            note_type: NoteType::Sixteenth,
+            dots: 0,
+            midi: p,
+            velocity: 68,
+        });
+    }
+    notes
+}
+
+fn single_dotted_quarter(midi: u8) -> Vec<SubNote> {
+    vec![SubNote {
+        offset_frac: 0.0,
+        note_type: NoteType::Quarter,
+        dots: 1,
+        midi,
+        velocity: 86,
+    }]
+}
+
+fn rest_then_eighth(midi: u8) -> Vec<SubNote> {
+    vec![SubNote {
+        offset_frac: 0.5,
+        note_type: NoteType::Eighth,
+        dots: 0,
+        midi,
+        velocity: 76,
+    }]
 }
 
 fn rhythm_subdivisions(
@@ -333,84 +481,23 @@ fn rhythm_subdivisions(
     prev_midi: Option<u8>,
     conservative: bool,
 ) -> Vec<SubNote> {
-    let passing = if conservative {
-        prev_midi.and_then(|p| stepwise_passing_between(p, midi))
-    } else {
-        prev_midi.and_then(|p| {
-            if p != midi {
-                stepwise_passing_between(p, midi).or_else(|| {
-                    let step = (midi as i16 - p as i16).signum();
-                    Some((midi as i16 - step).clamp(0, 127) as u8)
-                })
-            } else {
-                None
-            }
-        })
-    };
+    let passing = prev_midi.and_then(|prev| {
+        if prev == midi {
+            return None;
+        }
+        fill_passing_tone(prev, midi, conservative)
+    });
 
     match dur {
-        MotifDur::Quarter => vec![SubNote {
-            offset_frac: 0.0,
-            note_type: NoteType::Quarter,
-            dots: 0,
-            midi,
-            velocity: 82,
-        }],
-        MotifDur::TwoEighths => {
-            let second_midi = passing.unwrap_or(midi);
-            vec![
-                SubNote {
-                    offset_frac: 0.0,
-                    note_type: NoteType::Eighth,
-                    dots: 0,
-                    midi,
-                    velocity: 84,
-                },
-                SubNote {
-                    offset_frac: 0.5,
-                    note_type: NoteType::Eighth,
-                    dots: 0,
-                    midi: second_midi,
-                    velocity: if second_midi == midi { 70 } else { 72 },
-                },
-            ]
-        }
-        MotifDur::SyncopatedEighth => {
-            let mut notes = vec![SubNote {
-                offset_frac: 0.25,
-                note_type: NoteType::Eighth,
-                dots: 0,
-                midi,
-                velocity: 80,
-            }];
-            if let Some(p) = passing {
-                notes.push(SubNote {
-                    offset_frac: 0.75,
-                    note_type: NoteType::Sixteenth,
-                    dots: 0,
-                    midi: p,
-                    velocity: 68,
-                });
-            }
-            notes
-        }
-        MotifDur::DottedQuarter => vec![SubNote {
-            offset_frac: 0.0,
-            note_type: NoteType::Quarter,
-            dots: 1,
-            midi,
-            velocity: 86,
-        }],
-        MotifDur::RestThenEighth => vec![SubNote {
-            offset_frac: 0.5,
-            note_type: NoteType::Eighth,
-            dots: 0,
-            midi,
-            velocity: 76,
-        }],
+        MotifDur::Quarter => single_quarter_note(midi),
+        MotifDur::TwoEighths => two_eighths_with_passing(midi, prev_midi, passing, conservative),
+        MotifDur::SyncopatedEighth => syncopated_with_passing(midi, passing),
+        MotifDur::DottedQuarter => single_dotted_quarter(midi),
+        MotifDur::RestThenEighth => rest_then_eighth(midi),
     }
 }
 
+#[derive(Clone)]
 struct MelodyCandidateGenerator {
     chord_grid: Vec<RuleChord>,
     measure_ids: Vec<RuleNodeId>,
@@ -435,6 +522,24 @@ struct MelodyCandidateGenerator {
 }
 
 impl MelodyCandidateGenerator {
+    fn consonant_weak_nct(&self, prev: u8, midi: u8, chord: &RuleChord) -> bool {
+        let pc = midi % 12;
+        if !self.scale_pcs.contains(&pc) {
+            return false;
+        }
+        let step = (midi as i16 - prev as i16).unsigned_abs();
+        if step == 0 || step > 2 {
+            return false;
+        }
+        if chord.pitch_classes().contains(&pc) {
+            return true;
+        }
+        chord
+            .pitch_classes()
+            .iter()
+            .any(|&ct| (pc as i16 - ct as i16).rem_euclid(12) <= 2 || (ct as i16 - pc as i16).rem_euclid(12) <= 2)
+    }
+
     fn phrase_anchor_at(&self, step: usize) -> u8 {
         for plan in &self.phrase_plans {
             let end = plan.phrase_start_beat + plan.region_beats.max(1);
@@ -536,7 +641,6 @@ impl CandidateGenerator for MelodyCandidateGenerator {
             .or_else(|| self.chord_grid.get(measure_idx))
             .cloned()
             .unwrap_or_else(|| RuleChord::simple(0, aurora_ast::ChordQuality::Major, "C"));
-
         let measure_id = self
             .measure_ids
             .get(measure_idx)
@@ -806,9 +910,12 @@ impl CandidateGenerator for MelodyCandidateGenerator {
                 && beat_strength == BeatStrengthKind::Weak
                 && !(conservative && self.tonal_conservatism >= 0.55)
             {
-                for delta in [-3i16, 3, -4, 4] {
+                for delta in [-2i16, -1, 1, 2] {
                     let midi = (prev as i16 + delta).clamp(0, 127) as u8;
-                    if midi >= min_midi && midi <= max_midi {
+                    if midi >= min_midi
+                        && midi <= max_midi
+                        && self.consonant_weak_nct(prev, midi, &chord)
+                    {
                         candidates.push(make_patch(
                             measure_id,
                             beat,
@@ -949,13 +1056,24 @@ impl CandidateGenerator for MelodyCandidateGenerator {
                     })
                     .unwrap_or(false)
             });
-        }
+            }
 
         // Motif region: stay near planned contour + chord tones
-        if self.motif_weight > 0.55 {
+        // NOTE: Disabled — the motif_region filter was too aggressive,
+        // excluding tonic and other critical cadential pitches even
+        // at non-closure steps (e.g., when chord is G major and motif
+        // expects a pitch far from C). Melodic contour is rewarded by
+        // soft scoring rules instead.
+        if false && self.motif_weight > 0.55 && !in_closure_zone {
             if let Some(expected) = self.expected_motif_pitch(step) {
                 let mut allowed: std::collections::HashSet<u8> =
                     chord.voicing_pcs().into_iter().collect();
+                // Include all diatonic scale degrees so the melody can move freely
+                for &pc in &self.scale_pcs {
+                    allowed.insert(pc);
+                }
+                // Always include the key tonic so cadential pitches survive
+                allowed.insert(self.tonic_pc);
                 for delta in -3i16..=3 {
                     let midi = (expected as i16 + delta).clamp(0, 127) as u8;
                     allowed.insert(midi % 12);
@@ -983,11 +1101,12 @@ impl CandidateGenerator for MelodyCandidateGenerator {
             });
         }
 
-        // Force resolved endings: final note on tonic, phrase ends prefer tonic region
+        // Cadence-aware closure zone filtering
         if is_final_step {
+            let final_pcs = CadenceFormula::Authentic.final_pcs(self.tonic_pc);
             candidates.retain(|c| {
                 patch_midi(c)
-                    .map(|m| m % 12 == self.tonic_pc)
+                    .map(|m| final_pcs.contains(&(m % 12)))
                     .unwrap_or(false)
             });
             if candidates.is_empty() {
@@ -1005,7 +1124,60 @@ impl CandidateGenerator for MelodyCandidateGenerator {
                     }
                 }
             }
-        } else if is_phrase_end_step || in_closure_zone {
+        } else if is_phrase_end_step {
+            // Penultimate step: try to force leading tone or approach tone to tonic
+            let formula = CadenceFormula::Authentic;
+            let pen_pcs = formula.penultimate_pcs(self.tonic_pc);
+            let had_candidates = !candidates.is_empty();
+            candidates.retain(|c| {
+                patch_midi(c)
+                    .map(|m| pen_pcs.contains(&(m % 12)))
+                    .unwrap_or(false)
+            });
+            // If cadence filtering emptied the pool (e.g. narrow register or
+            // earlier-stage constraints), fall back to a wider closure-friendly set
+            if candidates.is_empty() && had_candidates {
+                let mut allowed: std::collections::HashSet<u8> =
+                    self.scale_pcs.iter().copied().collect();
+                allowed.insert(self.tonic_pc);
+                allowed.insert(leading_pc);
+                for &pc in &pen_pcs {
+                    allowed.insert(pc);
+                }
+                for pc in allowed {
+                    for octave in 4..=7 {
+                        let midi = octave * 12 + pc;
+                        if midi >= min_midi && midi <= max_midi {
+                            candidates.push(make_patch(
+                                measure_id,
+                                beat,
+                                midi,
+                                beat_strength,
+                                &chord,
+                                "closure_scale",
+                            ));
+                        }
+                    }
+                }
+            } else if candidates.is_empty() {
+                // No original candidates existed; generate formula pitches directly
+                for pc in pen_pcs {
+                    for octave in 4..=7 {
+                        let midi = octave * 12 + pc;
+                        if midi >= min_midi && midi <= max_midi {
+                            candidates.push(make_patch(
+                                measure_id,
+                                beat,
+                                midi,
+                                beat_strength,
+                                &chord,
+                                "cadence_approach",
+                            ));
+                        }
+                    }
+                }
+            }
+        } else if in_closure_zone {
             let mut allowed: std::collections::HashSet<u8> =
                 self.scale_pcs.iter().copied().collect();
             allowed.insert(self.tonic_pc);

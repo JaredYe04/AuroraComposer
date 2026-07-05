@@ -39,9 +39,19 @@ pub fn resolve_accompaniment_instrument(genre: &str, preset: &str) -> (u8, &'sta
         "piano" => (0, "Acoustic Piano"),
         _ => match genre.to_lowercase().as_str() {
             "classical" | "film" | "orchestral" => (48, "String Ensemble"),
-            "jazz" | "lofi" => (4, "Electric Piano"),
+            "jazz" | "lofi" => (0, "Acoustic Piano"),
             _ => (0, "Acoustic Piano"),
         },
+    }
+}
+
+/// GM program and display name for bass, tuned by style.
+pub fn resolve_bass_instrument(genre: &str) -> (u8, &'static str) {
+    match genre.to_lowercase().as_str() {
+        "jazz" => (33, "Electric Bass (Finger)"),
+        "ambient" => (39, "Synth Bass"),
+        "classical" | "film" | "orchestral" => (43, "Contrabass"),
+        _ => (32, "Acoustic Bass"),
     }
 }
 

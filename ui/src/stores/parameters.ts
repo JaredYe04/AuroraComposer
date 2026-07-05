@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { getParameters, setParameters as setParamsCmd } from '@/services/tauri';
+import { GENERATION_PRESETS } from '@/presets/generationPresets';
 import type { UiParameterSnapshot } from '@/types/aurora';
 import { normalizeSeed, rollSeed, sessionSeed } from '@/utils/seed';
 
@@ -20,12 +21,13 @@ const defaultParams = (): UiParameterSnapshot => ({
   drum_hihat_density: 0.6,
   progression_mode: 'loop',
   tonal_conservatism: 0.75,
-  accompaniment_instrument: 'piano',
+  accompaniment_instrument: 'auto',
   seed: sessionSeed(),
 });
 
 export const useParameterStore = defineStore('parameters', () => {
   const snapshot = ref<UiParameterSnapshot>(defaultParams());
+  const selectedPresetId = ref<string>('');
   const loading = ref(false);
 
   function mergeDefaults(partial: Partial<UiParameterSnapshot>): UiParameterSnapshot {
@@ -68,9 +70,30 @@ export const useParameterStore = defineStore('parameters', () => {
     await applySeed(rollSeed());
   }
 
-  function reset() {
-    snapshot.value = defaultParams();
+  async function applyPreset(presetId: string) {
+    const preset = GENERATION_PRESETS.find((p) => p.id === presetId);
+    if (!preset) return;
+    selectedPresetId.value = presetId;
+    await setParameters({
+      ...preset.patch,
+      seed: normalizeSeed(snapshot.value.seed),
+    });
   }
 
-  return { snapshot, loading, load, setParameters, applySeed, rollRandomSeed, reset };
+  function reset() {
+    snapshot.value = defaultParams();
+    selectedPresetId.value = '';
+  }
+
+  return {
+    snapshot,
+    selectedPresetId,
+    loading,
+    load,
+    setParameters,
+    applySeed,
+    rollRandomSeed,
+    applyPreset,
+    reset,
+  };
 });

@@ -59,14 +59,18 @@ pub fn generate_motif(
     let base_midi = 60 + tonic;
 
     let patterns: &[&[i8]] = &[
-        &[0, 2, 1, -3],
-        &[0, 3, -1, -2],
-        &[0, -2, 2, 0],
-        &[0, 1, 2, -3],
-        &[0, 4, -3, -1],
-        &[0, 2, -1, -1],
-        &[0, -1, 3, -2],
-        &[0, 3, -2, -1],
+        &[0, 2, 1, -1, 0],      // tonic→mediant→supertonic→tonic→tonic (classic arch)
+        &[0, -1, 2, 1, 0],      // tonic→leading→mediant→supertonic→tonic
+        &[0, 2, 4, 3, 1, 0],    // tonic→mediant→dominant→subdominant→supertonic→tonic
+        &[0, 1, 3, 4, 3, 2, 0], // tonic→supertonic→subdominant→dominant→subdominant→mediant→tonic
+        &[0, 4, 0, 4, 0],       // tonic→dominant→tonic→dominant→tonic (horn fifth)
+        &[0, 1, 0, 2, 0],       // tonic→supertonic→tonic→mediant→tonic (neighbor emphasis)
+        &[0, 2, 4, 2, 0],       // tonic→mediant→dominant→mediant→tonic (pure arch)
+        &[0, -1, 0, 2, 1, 0],   // tonic→leading→tonic→mediant→supertonic→tonic
+        &[0, 3, 4, 3, 2, 0],    // tonic→subdominant→dominant→subdominant→mediant→tonic
+        &[0, 2, 1, 2, 4, 3, 2, 0], // longer: tonic→mediant→supertonic→mediant→dominant→subdominant→mediant→tonic
+        &[0, 4, 5, 4, 2, 0],    // tonic→dominant→submediant→dominant→mediant→tonic
+        &[0, 1, 4, 4, 3, 1, 0], // tonic→supertonic→dominant→dominant→subdominant→supertonic→tonic
     ];
     let mix = seed
         .wrapping_mul(0x9E37_79B9)
@@ -91,14 +95,9 @@ pub fn generate_motif(
         contour.push(0);
     }
 
-    if mode.mode.to_lowercase().contains("major") {
-        intervals = snap_to_diatonic(&intervals, true);
-    } else if mode.mode.to_lowercase().contains("minor")
-        || mode.mode.to_lowercase().contains("dorian")
-        || mode.mode.to_lowercase().contains("phrygian")
-    {
-        intervals = snap_to_diatonic(&intervals, false);
-    }
+    // Convert scale-degree patterns to mode-appropriate semitones
+    let mode_steps = mode_step_pattern(&mode.mode);
+    intervals = scale_degrees_to_semitones(&intervals, mode_steps);
 
     Motif {
         id: id.to_string(),
@@ -108,6 +107,59 @@ pub fn generate_motif(
         tonic_anchor: tonic,
         base_midi,
     }
+}
+
+fn mode_step_pattern(mode_name: &str) -> &[i8] {
+    match mode_name.to_lowercase().as_str() {
+        "major" | "ionian" => &[2, 2, 1, 2, 2, 2, 1],
+        "dorian" => &[2, 1, 2, 2, 2, 1, 2],
+        "phrygian" => &[1, 2, 2, 2, 1, 2, 2],
+        "lydian" => &[2, 2, 2, 1, 2, 2, 1],
+        "mixolydian" => &[2, 2, 1, 2, 2, 1, 2],
+        "natural minor" | "aeolian" => &[2, 1, 2, 2, 1, 2, 2],
+        "harmonic minor" => &[2, 1, 2, 2, 1, 3, 1],
+        "melodic minor" => &[2, 1, 2, 2, 2, 2, 1],
+        _ => &[2, 2, 1, 2, 2, 2, 1], // default to major
+    }
+}
+
+fn scale_degrees_to_semitones(degrees: &[Semitone], mode_steps: &[i8]) -> Vec<Semitone> {
+    let mut result = Vec::with_capacity(degrees.len());
+    let mut current_degree: i8 = 0;  // Current scale degree position (0-6)
+    
+    for &delta in degrees {
+        let semitone_delta = scale_delta_to_semitone(delta, mode_steps, &mut current_degree);
+        result.push(semitone_delta);
+    }
+    result
+}
+
+/// Convert a scale-degree delta to a semitone delta, tracking current degree position.
+/// delta=+2 in major from degree 0 means: mode_steps[0] + mode_steps[1] = 2 + 2 = 4 semitones.
+fn scale_delta_to_semitone(delta: i8, mode_steps: &[i8], current_degree: &mut i8) -> i8 {
+    if delta == 0 {
+        return 0;
+    }
+    
+    let direction = delta.signum();
+    let steps = delta.unsigned_abs() as usize;
+    let mut semitones: i8 = 0;
+    
+    for _ in 0..steps {
+        let idx = if direction > 0 {
+            // Going up: use the step from current degree to next
+            current_degree.rem_euclid(7) as usize
+        } else {
+            // Going down: use the step from previous degree to current
+            // (previous degree is the one below current)
+            let prev_degree = (*current_degree - 1).rem_euclid(7) as usize;
+            prev_degree
+        };
+        semitones += mode_steps[idx] * direction;
+        *current_degree = (*current_degree + direction).rem_euclid(7);
+    }
+    
+    semitones
 }
 
 fn snap_to_diatonic(intervals: &[Semitone], major: bool) -> Vec<Semitone> {

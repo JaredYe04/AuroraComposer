@@ -151,10 +151,12 @@ fn tile_and_cadence(
 
 fn plan_flow(ctx: &ProgressionPlanContext<'_>, tonic: u8) -> Vec<PlannedChord> {
     let cadence = ctx.cadence_measures.last().copied();
+    let mode = mode::parse_mode(&ctx.params.mode.mode);
     let mut result = plan_flow_progression(
         tonic,
         ctx.total_measures,
         &ctx.tension_targets,
+        mode,
         ctx.style.jazz_harmony,
         cadence,
     );
